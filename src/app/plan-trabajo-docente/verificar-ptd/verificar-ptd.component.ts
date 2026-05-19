@@ -344,10 +344,54 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
       return;
     }
     if (this.periodos.select && (this.proyectos.select || this.roles.includes(ROLES.DOCENTE))) {
-      let url = `plan/preaprobado?vigencia=${this.periodos.select.Id}`;
+      // let url = `plan/preaprobado?vigencia=${this.periodos.select.Id}`;
+      // if (this.proyectos.select && !this.roles.includes(ROLES.DOCENTE)) {
+      //   url += `&proyecto=${this.proyectos.select.Id}`;
+      // }
+      // let url = `plan/preaprobado?vigencia=${this.periodos.select.Id}&proyecto=${this.proyectos.select.Id}`;
+      
+      let url = `asignacion?vigencia=${this.periodos.select.Id}`;
       if (this.proyectos.select && !this.roles.includes(ROLES.DOCENTE)) {
         url += `&proyecto=${this.proyectos.select.Id}`;
       }
+
+      this.sgaPlanTrabajoDocenteMidService.get(`preasignacion?vigencia=${this.periodos.select.Id}`).subscribe(
+        (respPre) => {
+          // const preasignaciones = Array.isArray(respPre?.Data) ? respPre.Data : []; // Información de la carga
+          
+          this.sgaPlanTrabajoDocenteMidService.get(url).subscribe(
+            (resp) => {
+              let planes = (resp.Data || [])
+                .filter((row: any) => row.estado === "Enviado a coordinación")
+                .map((row: any) => {
+                  return {
+                    ...row,
+                    nombre: row.docente, // La tabla usa 'nombre'
+                    tercero_id: row.docente_id, // Para cargarPlan()
+                    vinculacion_id: row.tipo_vinculacion_id, // Para cargarPlan()
+                    id: row.plan_docente_id // Para traer la informacion de plan_docente en cargarPlan()
+                  };
+                });
+              
+              // Opcional: Filtrar o cruzar con preasignaciones si la lógica del negocio lo llega a requerir
+              // ...
+
+              this.dataSource = new MatTableDataSource(planes);
+            }, (err) => {
+              this.dataSource = new MatTableDataSource();
+              console.warn(err);
+              this.popUpManager.showPopUpGeneric(this.translate.instant('ptd.verificacion_ptd'),this.translate.instant('ptd.no_planes_particulares'), MODALS.WARNING, false)
+            }
+          );
+        },
+        (errPre) => {
+          console.warn("Error obteniendo preasignacion:", errPre);
+          this.dataSource = new MatTableDataSource();
+          this.popUpManager.showPopUpGeneric(this.translate.instant('ptd.verificacion_ptd'),this.translate.instant('ptd.no_planes_particulares'), MODALS.WARNING, false)
+        }
+      );
+
+      /* CÓDIGO COMENTADO QUE YA NO SE USARÁ:
       this.sgaPlanTrabajoDocenteMidService.get(url).subscribe(
         (resp) => {
           let planes = <any[]>resp.Data;
@@ -362,6 +406,7 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
           this.popUpManager.showPopUpGeneric(this.translate.instant('ptd.verificacion_ptd'),this.translate.instant('ptd.no_planes_particulares'), MODALS.WARNING, false)
         }
       );
+      */
     }
   }
 
