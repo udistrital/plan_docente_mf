@@ -17,7 +17,7 @@
             (selectionChange)="onProyectoChange()"
           >
             <mat-option>--{{ "GLOBAL.seleccionar" | translate }}--</mat-option>
-            <mat-option *ngFor="let item of proyectos?.opciones" [value]="item">
+            <mat-option *ngFor="let item of proyectos.opciones" [value]="item">
               {{ item.Codigo }} - {{ item.Nombre }}
             </mat-option>
           </mat-select>
@@ -55,6 +55,16 @@
           <mat-icon>refresh</mat-icon>
           {{ "GLOBAL.actualizar" | translate }}
         </button>
+        <button
+          mat-flat-button
+          color="primary"
+          *ngIf="this.periodos.select && this.proyectos.select"
+          (click)="aprobarSeleccionados()"
+          [disabled]="bulkApprovalInProgress || !hayPlanesSeleccionados()"
+        >
+          <mat-icon>done_all</mat-icon>
+          {{ "ptd.aprobar_seleccionados" | translate }}
+        </button>
       </mat-toolbar>
 
       <div class="margin-y">
@@ -64,6 +74,25 @@
         </mat-form-field>
         <div class="table">
           <mat-table mat-table [dataSource]="dataSource" matSort>
+            <ng-container matColumnDef="seleccion">
+              <mat-header-cell *matHeaderCellDef>
+                <mat-checkbox
+                  color="primary"
+                  [checked]="isAllSelected()"
+                  [indeterminate]="selection.hasValue() && !isAllSelected()"
+                  (change)="toggleAllRows()"
+                  [disabled]="bulkApprovalInProgress || dataSource.data.length === 0"
+                ></mat-checkbox>
+              </mat-header-cell>
+              <mat-cell *matCellDef="let row">
+                <mat-checkbox
+                  color="primary"
+                  [checked]="selection.isSelected(row)"
+                  (change)="toggleFila(row)"
+                  [disabled]="bulkApprovalInProgress || !esPlanAprobable(row)"
+                ></mat-checkbox>
+              </mat-cell>
+            </ng-container>
             <ng-container matColumnDef="nombre">
               <mat-header-cell *matHeaderCellDef mat-sort-header>
                 <b>{{ "GLOBAL.nombre" | translate }}</b>
@@ -116,6 +145,19 @@
                   [value]="row.gestion"
                   (valueChanged)="accionGestion($event)"
                 ></action-button>
+              </mat-cell>
+            </ng-container>
+
+            <ng-container matColumnDef="semaforo">
+              <mat-header-cell *matHeaderCellDef>
+                <b>{{ "ptd.semaforo" | translate }}</b>
+              </mat-header-cell>
+              <mat-cell *matCellDef="let row">
+                <mat-icon
+                  [style.color]="getSemaforoEstado(row).color"
+                  matTooltip="{{ getSemaforoEstado(row).tooltip }}"
+                  >{{ getSemaforoEstado(row).icon }}</mat-icon
+                >
               </mat-cell>
             </ng-container>
             <ng-container matColumnDef="estado">
