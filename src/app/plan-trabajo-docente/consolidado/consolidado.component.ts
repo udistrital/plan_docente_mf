@@ -4,16 +4,12 @@ import { MatSort } from "@angular/material/sort";
 import { MatTableDataSource } from "@angular/material/table";
 import { MODALS, ROLES, VIEWS } from "src/app/models/diccionario";
 import { UserService } from "src/app/services/user.service";
-import {
-  head as _head,
-  cloneDeep as _cloneDeep,
-} from "lodash-es";
+import { cloneDeep as _cloneDeep } from "lodash-es";
 import { Periodo } from "src/app/models/parametros/periodo";
 import { TranslateService } from "@ngx-translate/core";
 import { PopUpManager } from "src/app/managers/popUpManager";
 import { PlanTrabajoDocenteService } from "src/app/services/plan-trabajo-docente.service";
 import { ParametrosService } from "src/app/services/parametros.service";
-import { ProyectoAcademicoService } from "src/app/services/proyecto-academico.service";
 import { RespFormat } from "src/app/models/response-format";
 import { checkContent, checkResponse } from "src/app/utils/verify-response";
 import { EstadoConsolidado } from "src/app/models/plan-trabajo-docente/estado-consolidado";
@@ -100,7 +96,6 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
     private popUpManager: PopUpManager,
     private planTrabajoDocenteService: PlanTrabajoDocenteService,
     private parametrosService: ParametrosService,
-    private proyectoAcademicoService: ProyectoAcademicoService,
     private tercerosService: TercerosService,
     private sgaPlanTrabajoDocenteMidService: SgaPlanTrabajoDocenteMidService,
     private gestorDocumentalService: GestorDocumentalService,
@@ -143,6 +138,13 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
     this.dataSource.sort = this.sort;
   }
 
+  private configurarDataSource(data: any[] = []) {
+    const dataSource = new MatTableDataSource(data);
+    dataSource.paginator = this.paginator;
+    dataSource.sort = this.sort;
+    return dataSource;
+  }
+
   cargarEventoPTD() {
     this.sgaPlanTrabajoDocenteMidService.get("calendario/eventos").subscribe({
       next: (resp: any) => {
@@ -154,6 +156,8 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
             this.cargarCalendarioEventos().then(eventosCalendario => {
               this.calendarEventosPTD = eventosCalendario;
               this.resolverProyectosDesdeCalendario();
+              this.verificarRangoFechas();
+              this.intentarListarConsolidados();
             }).catch(err => console.warn(err));
           }
         }
@@ -196,6 +200,12 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
       }
     });
     this.proyectos.opciones = Array.from(proyectosMap.values());
+  }
+
+  private intentarListarConsolidados() {
+    if (this.periodos.select && this.proyectos.select && this.enRangoCalendario) {
+      this.listarConsolidados();
+    }
   }
 
   filtrarPeriodosPorCalendario() {
@@ -419,18 +429,15 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
 
   async loadSelects() {
     try {
-      let promesas = [];
-      promesas.push(
+      await Promise.all([
         this.loadPeriodo().then((periodos) => {
           this.periodos.opciones = periodos;
           this._todosLosPeriodos = [...periodos];
-        })
-      );
-      promesas.push(
+        }),
         this.cargarEstadosConsolidado().then((estadosConsolidado) => {
           this.estadosConsolidado.opciones = estadosConsolidado;
-        })
-      );
+        }),
+      ]);
     } catch (error) {
       console.warn(error);
       this.popUpManager.showPopUpGeneric(
@@ -449,19 +456,23 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
   onProyectoChange() {
     this.periodos.select = undefined;
     this.periodos.opciones = [];
-    this.dataSource = new MatTableDataSource();
+    this.dataSource = this.configurarDataSource();
     if (this.proyectos.select) {
       this.filtrarPeriodosPorCalendario();
     }
   }
 
   onPeriodoChange() {
-    this.dataSource = new MatTableDataSource();
+    this.dataSource = this.configurarDataSource();
     if (this.periodos.select) {
       this.verificarRangoFechas();
       if (!this.enRangoCalendario) {
-        this.popUpManager.showErrorToast("El periodo seleccionado no se encuentra en el rango de fechas.");
+        if (this.calendarEventosPTD.length > 0) {
+          this.popUpManager.showErrorToast("El periodo seleccionado no se encuentra en el rango de fechas.");
+        }
+        return;
       }
+      this.intentarListarConsolidados();
     }
   }
 
@@ -472,6 +483,7 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
       );
       return;
     }
+    this.verificarRangoFechas();
     if (!this.enRangoCalendario) {
       this.popUpManager.showErrorToast("El periodo seleccionado no se encuentra en el rango de fechas.");
       return;
@@ -550,11 +562,11 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
                 ConsolidadoJson: consolidado,
               });
             });
-            this.dataSource = new MatTableDataSource(formatedData);
+            this.dataSource = this.configurarDataSource(formatedData);
           },
           (err) => {
             console.warn(err);
-            this.dataSource = new MatTableDataSource();
+            this.dataSource = this.configurarDataSource();
           }
         );
     }
@@ -915,15 +927,25 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
         .subscribe(
           (resp) => {
             this.listaPlanesConsolidado = resp.Data.listaIdPlanes;
-            const rawFilePDF = new Uint8Array(
-              atob(resp.Data.pdf)
-                .split("")
-                .map((char) => char.charCodeAt(0))
-            );
-            const urlFilePDF = window.URL.createObjectURL(
-              new Blob([rawFilePDF], { type: "application/pdf" })
-            );
-            this.previewFile(urlFilePDF);
+            const pdfBase64 = resp?.Data?.pdf || "";
+            if (pdfBase64.trim().length > 0) {
+              const rawFilePDF = new Uint8Array(
+                atob(pdfBase64)
+                  .split("")
+                  .map((char) => char.charCodeAt(0))
+              );
+              const urlFilePDF = window.URL.createObjectURL(
+                new Blob([rawFilePDF], { type: "application/pdf" })
+              );
+              this.previewFile(urlFilePDF);
+            } else {
+              this.popUpManager.showPopUpGeneric(
+                "",
+                this.translate.instant("ptd.pdf_solover_excel_imprimir"),
+                MODALS.INFO,
+                false
+              );
+            }
             const rawFileExcel = new Uint8Array(
               atob(resp.Data.excel)
                 .split("")
