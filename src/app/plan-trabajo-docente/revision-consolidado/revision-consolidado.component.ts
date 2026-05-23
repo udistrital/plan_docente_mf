@@ -98,9 +98,11 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
     this.formRevConsolidado = this.builder.group({});
   }
 
-  ngOnInit() {
-    this.cargarEventoPTD();
-    this.userService.getUserRoles().then(async roles => {
+  async ngOnInit() {
+    this.popUpManager.showLoading();
+    try {
+      await this.cargarEventoPTD();
+      const roles = await this.userService.getUserRoles();
       this.roles = roles;
       const observables: { [key: string]: Observable<boolean> } = {};
       this.opcionesPermisos.forEach(opcion => {
@@ -112,9 +114,13 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
       this.isSecDecanatura = !!this.permisos['enviar_secDecanatura'];
       this.isDecano = !!this.permisos['aprobar_decanatura'];
       console.log("Permisos cargados:", this.permisos);
-    });
-    this.loadSelects();
-    this.buildForm();
+      await this.loadSelects();
+      this.buildForm();
+    } catch (err) {
+      this.popUpManager.showErrorToast(this.translate.instant("GLOBAL.error_carga"));
+    } finally {
+      this.popUpManager.closeLoading();
+    }
   }
 
   ngAfterViewInit() {
@@ -122,26 +128,35 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
     this.dataSource.sort = this.sort;
   }
 
-  cargarEventoPTD() {
-    this.sgaPlanTrabajoDocenteMidService.get("calendario/eventos").subscribe({
-      next: (resp: any) => {
-        if (checkContent(resp)) {
-          const eventos = Array.isArray(resp.Data) ? resp.Data : [];
-          const evento = eventos.find((e: any) => e.Descripcion === "PLANES DE TRABAJO DOCENTES");
-          if (evento) {
-            this.codigoEventoPTD = evento.CodigoEvento;
-            this.cargarCalendarioEventos().then(eventosCalendario => {
-              this.calendarEventosPTD = eventosCalendario;
-              this.resolverProyectosDesdeCalendario();
-            }).catch(err => console.warn(err));
-          }
+  async cargarEventoPTD(): Promise<void> {
+      const resp: any = await firstValueFrom(
+        this.sgaPlanTrabajoDocenteMidService.get("calendario/eventos")
+      );
+  
+      if (checkContent(resp)) {
+  
+        const eventos = Array.isArray(resp.Data)
+          ? resp.Data
+          : [];
+  
+        const evento = eventos.find(
+          (e: any) =>
+            e.Descripcion === "PLANES DE TRABAJO DOCENTES"
+        );
+  
+        if (evento) {
+  
+          this.codigoEventoPTD = evento.CodigoEvento;
+  
+          const eventosCalendario =
+            await this.cargarCalendarioEventos();
+  
+          this.calendarEventosPTD = eventosCalendario;
+  
+          this.resolverProyectosDesdeCalendario();
         }
-      },
-      error: (err: any) => {
-        console.warn("Error obteniendo calendario/eventos:", err);
       }
-    });
-  }
+    }
 
   cargarCalendarioEventos(): Promise<any[]> {
     return new Promise((resolve, reject) => {

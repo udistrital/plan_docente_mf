@@ -21,6 +21,7 @@ import { TercerosService } from 'src/app/services/terceros.service';
 import { MatDialog, MatDialogConfig } from '@angular/material/dialog';
 import { DialogoFirmaPtdComponent } from 'src/app/dialog-components/dialogo-firma-ptd/dialogo-firma-ptd.component';
 import { DialogPreviewFileComponent } from 'src/app/dialog-components/dialog-preview-file/dialog-preview-file.component';
+import { firstValueFrom } from 'rxjs/internal/firstValueFrom';
 
 @Component({
     selector: 'app-verificar-ptd',
@@ -83,14 +84,20 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
     this.formVerificar = this.builder.group({});
   }
 
-  ngOnInit() {
-    this.cargarEventoPTD();
-    this.userService.getUserRoles().then(roles => {
+  async ngOnInit() {
+    this.popUpManager.showLoading();
+    try {
+      await this.cargarEventoPTD();
+      const roles = await this.userService.getUserRoles();
       this.roles = roles;
       this.isCoordinator = _head(_intersection(roles, this.rolesCoord));
-    });
-    this.loadSelects();
-    this.buildForms();
+      await this.loadSelects();
+      this.buildForms();
+    } catch (err) {
+      this.popUpManager.showErrorToast(this.translate.instant("GLOBAL.error_carga"));
+    } finally {
+      this.popUpManager.closeLoading();
+    }
   }
 
   ngAfterViewInit() {
@@ -98,26 +105,35 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
     this.dataSource.sort = this.sort;
   }
 
-  cargarEventoPTD() {
-    this.sgaPlanTrabajoDocenteMidService.get("calendario/eventos").subscribe({
-      next: (resp: any) => {
-        if (checkContent(resp)) {
-          const eventos = Array.isArray(resp.Data) ? resp.Data : [];
-          const evento = eventos.find((e: any) => e.Descripcion === "PLANES DE TRABAJO DOCENTES");
-          if (evento) {
-            this.codigoEventoPTD = evento.CodigoEvento;
-            this.cargarCalendarioEventos().then(eventosCalendario => {
-              this.calendarEventosPTD = eventosCalendario;
-              this.resolverProyectosDesdeCalendario();
-            }).catch(err => console.warn(err));
-          }
+  async cargarEventoPTD(): Promise<void> {
+      const resp: any = await firstValueFrom(
+        this.sgaPlanTrabajoDocenteMidService.get("calendario/eventos")
+      );
+  
+      if (checkContent(resp)) {
+  
+        const eventos = Array.isArray(resp.Data)
+          ? resp.Data
+          : [];
+  
+        const evento = eventos.find(
+          (e: any) =>
+            e.Descripcion === "PLANES DE TRABAJO DOCENTES"
+        );
+  
+        if (evento) {
+  
+          this.codigoEventoPTD = evento.CodigoEvento;
+  
+          const eventosCalendario =
+            await this.cargarCalendarioEventos();
+  
+          this.calendarEventosPTD = eventosCalendario;
+  
+          this.resolverProyectosDesdeCalendario();
         }
-      },
-      error: (err: any) => {
-        console.warn("Error obteniendo calendario/eventos:", err);
       }
-    });
-  }
+    }
 
   resolverProyectosDesdeCalendario() {
     if (!this.calendarEventosPTD || this.calendarEventosPTD.length === 0) return;
@@ -301,7 +317,7 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
 
   async loadSelects() {
     try {
-      let promesas = [];
+      let promesas: Promise<void>[] = [];
       promesas.push(this.loadPeriodo().then(periodos => {
         this.periodos.opciones = periodos;
         this._todosLosPeriodos = [...periodos];
@@ -310,6 +326,7 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
         this.estadosPlan.opciones = estadosPlan;
         this.estadosPlan.opcionesfiltradas = this.estadosPlan.opciones.filter(estado => (estado.codigo_abreviacion == "APR") || (estado.codigo_abreviacion == "N_APR"));
       }));
+      await Promise.all(promesas);
     } catch (error) {
       console.warn(error);
       this.popUpManager.showPopUpGeneric(this.translate.instant('ERROR.titulo_generico'),

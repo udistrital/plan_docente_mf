@@ -92,54 +92,68 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
     this.dialogConfig = new MatDialogConfig();
   }
 
-  ngOnInit() {
-    this.cargarEventoPTD();
-    this.userService.getUserRoles().then(async (roles) => {
+  async ngOnInit() {
+    this.popUpManager.showLoading();
+    try{
+      await this.cargarEventoPTD();
+      // Espera roles
+      const roles = await this.userService.getUserRoles();
       this.roles = roles;
+      // Construcción observables permisos
       const observables: { [key: string]: Observable<boolean> } = {};
       this.opcionesPermisos.forEach(opcion => {
         observables[opcion] =
-          this.permisosUtils.tienePermiso(this.roles, opcion);
-      });
-      const resultados = await firstValueFrom(forkJoin(observables));
-      this.permisos = resultados;
-      console.log('Permisos:', this.permisos);
-    });
-    this.cargarPeriodo()
-      .then((resp) => (this.periodos = resp))
-      .catch((err) => {
-        this.popUpManager.showErrorToast(
-          this.translate.instant("GLOBAL.sin_periodo")
-        );
-        this.periodos = [];
-      });
+          this.permisosUtils.tienePermiso(
+            roles,
+            opcion
+          );
 
-    this.dialogConfig.width = "65vw";
-    this.dialogConfig.minWidth = "700px";
-    this.dialogConfig.height = "65vh";
-    this.dialogConfig.maxHeight = "615px";
-    this.dialogConfig.data = {};
+      });
+      // Espera todos los permisos
+      this.permisos = await firstValueFrom(
+        forkJoin(observables)
+      );
+      this.periodos =await this.cargarPeriodo();
+      this.dialogConfig.width = "65vw";
+      this.dialogConfig.minWidth = "700px";
+      this.dialogConfig.height = "65vh";
+      this.dialogConfig.maxHeight = "615px";
+      this.dialogConfig.data = {};
+    }catch(err){
+      this.popUpManager.showErrorToast(this.translate.instant("GLOBAL.error_carga"));
+    } finally {
+      this.popUpManager.closeLoading();
+    }
   }
 
-  cargarEventoPTD() {
-    this.planDocenteMid.get("calendario/eventos").subscribe({
-      next: (resp: any) => {
-        if (checkContent(resp)) {
-          const eventos = Array.isArray(resp.Data) ? resp.Data : [];
-          const evento = eventos.find((e: any) => e.Descripcion === "PLANES DE TRABAJO DOCENTES");
-          if (evento) {
-            this.codigoEventoPTD = evento.CodigoEvento;
-            this.cargarCalendarioEventos().then(eventosCalendario => {
-              this.calendarEventosPTD = eventosCalendario;
-              this.resolverProyectosDesdeCalendario();
-            }).catch(err => console.warn(err));
-          }
-        }
-      },
-      error: (err: any) => {
-        console.warn("Error obteniendo calendario/eventos:", err);
+  async cargarEventoPTD(): Promise<void> {
+    const resp: any = await firstValueFrom(
+      this.planDocenteMid.get("calendario/eventos")
+    );
+
+    if (checkContent(resp)) {
+
+      const eventos = Array.isArray(resp.Data)
+        ? resp.Data
+        : [];
+
+      const evento = eventos.find(
+        (e: any) =>
+          e.Descripcion === "PLANES DE TRABAJO DOCENTES"
+      );
+
+      if (evento) {
+
+        this.codigoEventoPTD = evento.CodigoEvento;
+
+        const eventosCalendario =
+          await this.cargarCalendarioEventos();
+
+        this.calendarEventosPTD = eventosCalendario;
+
+        this.resolverProyectosDesdeCalendario();
       }
-    });
+    }
   }
 
   cargarCalendarioEventos(): Promise<any[]> {

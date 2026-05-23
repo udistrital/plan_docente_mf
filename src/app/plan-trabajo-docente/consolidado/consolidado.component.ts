@@ -121,9 +121,11 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
     this.respuestaConsolidado = false;
   }
 
-  ngOnInit() {
-    this.cargarEventoPTD();
-    this.userService.getUserRoles().then(async (roles) => {
+  async ngOnInit() {
+    this.popUpManager.showLoading();
+    try {
+      await this.cargarEventoPTD();
+      const roles = await this.userService.getUserRoles();
       this.roles = roles;
       const observables: { [key: string]: Observable<boolean> } = {};
       this.opcionesPermisos.forEach(opcion => {
@@ -133,9 +135,13 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
       const resultados = await firstValueFrom(forkJoin(observables));
       this.permisos = resultados;
       console.log("Permisos cargados:", this.permisos);
-    });
-    this.loadSelects();
-    this.buildForms();
+      await this.loadSelects();
+      this.buildForms();
+    } catch (err) {
+      this.popUpManager.showErrorToast(this.translate.instant("GLOBAL.error_carga"));
+    } finally {
+      this.popUpManager.closeLoading();
+    }
   }
 
   ngAfterViewInit() {
@@ -419,7 +425,7 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
 
   async loadSelects() {
     try {
-      let promesas = [];
+      let promesas: Promise<void>[] = [];
       promesas.push(
         this.loadPeriodo().then((periodos) => {
           this.periodos.opciones = periodos;
@@ -431,6 +437,7 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
           this.estadosConsolidado.opciones = estadosConsolidado;
         })
       );
+      await Promise.all(promesas);
     } catch (error) {
       console.warn(error);
       this.popUpManager.showPopUpGeneric(
