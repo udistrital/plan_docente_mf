@@ -31,10 +31,10 @@ import { NewNuxeoService } from "src/app/services/new_nuxeo.service";
 import { DocumentoService } from "src/app/services/documento.service";
 
 @Component({
-    selector: "horario-carga-lectiva",
-    templateUrl: "./horario-carga-lectiva.component.html",
-    styleUrls: ["./horario-carga-lectiva.component.scss"],
-    standalone: false
+  selector: "horario-carga-lectiva",
+  templateUrl: "./horario-carga-lectiva.component.html",
+  styleUrls: ["./horario-carga-lectiva.component.scss"],
+  standalone: false
 })
 export class HorarioCargaLectivaComponent implements OnInit, OnChanges {
   /** Definitions for horario */
@@ -548,7 +548,7 @@ export class HorarioCargaLectivaComponent implements OnInit, OnChanges {
   async cargarRestriccionesDeHorario(elementMoved: CardDetalleCarga) {
     this.banderaInfoNoSoltarTarjeta = true;
     this.dragEnabled = false;
-    await this.cargarRestricionesGrupoEstudio(elementMoved);
+    //await this.cargarRestricionesGrupoEstudio(elementMoved);
     await this.cargarRestricionesEspaciosFisicos(elementMoved);
     this.dragEnabled = true;
     this.banderaInfoNoSoltarTarjeta = false;
@@ -610,10 +610,10 @@ export class HorarioCargaLectivaComponent implements OnInit, OnChanges {
         .flatMap(res => res.Data)
         .filter(colocacion =>
           colocacion?.
-          ResumenColocacionEspacioFisico?.
-          espacio_fisico?.
-          salon?.
-          CodigoAbreviacion === espacioFisicoId
+            ResumenColocacionEspacioFisico?.
+            espacio_fisico?.
+            salon?.
+            CodigoAbreviacion === espacioFisicoId
         );
       if (colocacionesFiltradas.length > 0) {
         this.agregarRestriccionesAlHorario(
@@ -725,9 +725,9 @@ export class HorarioCargaLectivaComponent implements OnInit, OnChanges {
       .showPopUpGeneric(
         this.translate.instant("ptd.asignar"),
         this.translate.instant("ptd.ask_mover") +
-          "<br>" +
-          elementMoved.horaFormato +
-          "?",
+        "<br>" +
+        elementMoved.horaFormato +
+        "?",
         MODALS.QUESTION,
         true
       )
@@ -761,7 +761,7 @@ export class HorarioCargaLectivaComponent implements OnInit, OnChanges {
       this.planDocenteMid
         .get(
           "espacio-fisico/dependencia?dependencia=" +
-            this.asignaturaSelected.proyecto_id
+          this.asignaturaSelected.proyecto_id
         )
         .subscribe(
           (res) => {
@@ -1129,9 +1129,27 @@ export class HorarioCargaLectivaComponent implements OnInit, OnChanges {
       ...idsArchivosNuevos,
     ];
     let carga_plan = [];
-
+    console.log(this.listaCargaLectiva)
+    let totalHorasLectivas = 0;
+    let totalHorasPCCTE = 0;
     for (const element of this.listaCargaLectiva) {
       let horaInicio = parseInt(element.horaFormato.split(":")[0]);
+      if (element.tipo === 1) {
+        totalHorasLectivas += Number(element.horas);
+      }
+      if (element.tipo === 2) {
+        console.log(element);
+        const actividad = this.actividades.find(
+          (a: any) => a._id === element.idActividad
+        );
+        console.log(actividad);
+        const codigo = actividad?.codigo_abreviacion;
+
+        if (codigo === "PCCTE") {
+          totalHorasPCCTE += Number(element.horas);
+        }
+        console.log("Horas PCCTE acumuladas:", totalHorasPCCTE);
+      }
       if (!element.bloqueado) {
         const sedeId =
           element.sede?.sede_id || element.sede?.Id || element.sede?.id || "";
@@ -1186,7 +1204,13 @@ export class HorarioCargaLectivaComponent implements OnInit, OnChanges {
       }),
       estado_plan: estado_plan_is,
     };
-
+    if (totalHorasPCCTE >= totalHorasLectivas * 0.5) {
+      this.OutLoading.emit(false);
+      this.popUpManager.showErrorAlert(
+        "Las horas de preparacion de clase no pueden superar la mitad de la cantidad de horas lectivas."
+      );
+      return;
+    }
     this.planDocenteMid
       .put("plan/", {
         carga_plan: carga_plan,
@@ -1198,8 +1222,8 @@ export class HorarioCargaLectivaComponent implements OnInit, OnChanges {
         if (response.Status == 200) {
           this.popUpManager.showSuccessAlert(
             this.translate.instant("ptd.guardado_ptd_exito") +
-              " " +
-              this.vinculacionSelected.nombre
+            " " +
+            this.vinculacionSelected.nombre
           );
           this.DataChanged.emit(this.listaCargaLectiva);
         }
@@ -1267,22 +1291,22 @@ export class HorarioCargaLectivaComponent implements OnInit, OnChanges {
         }
         resolve(this.opcionesEdificios);
       } else {*/
-        this.academicaJbpmService
-          .get(
-            "edificios/"+sedeSeleccionada.sede_id
-          )
-          .subscribe(
-            (res) => {
-              this.opcionesEdificios = res.edificios.edificio;
-              this.ubicacionForm.get("edificio")?.enable();
-              resolve(res);
-            },
-            (err) => {
-              console.warn("cambioSede error", err);
-              resolve([]);
-            }
-          );
-      }
+      this.academicaJbpmService
+        .get(
+          "edificios/" + sedeSeleccionada.sede_id
+        )
+        .subscribe(
+          (res) => {
+            this.opcionesEdificios = res.edificios.edificio;
+            this.ubicacionForm.get("edificio")?.enable();
+            resolve(res);
+          },
+          (err) => {
+            console.warn("cambioSede error", err);
+            resolve([]);
+          }
+        );
+    }
     /*}*/);
   }
 
@@ -1298,18 +1322,18 @@ export class HorarioCargaLectivaComponent implements OnInit, OnChanges {
         this.ubicacionForm.get("salon")?.enable();
       }
     } else {*/
-      this.academicaJbpmService
-        .get(
-          "salones/"+this.ubicacionForm.get("edificio")?.value.codigo
-        )
-        .subscribe(
-          (res) => {
-            this.opcionesSalones = res.salones.salon;
-            this.opcionesSalonesFiltrados = this.opcionesSalones;
-            this.ubicacionForm.get("salon")?.enable();
-          },
-          (err) => console.warn("cambioEdificio error", err)
-        );
+    this.academicaJbpmService
+      .get(
+        "salones/" + this.ubicacionForm.get("edificio")?.value.codigo
+      )
+      .subscribe(
+        (res) => {
+          this.opcionesSalones = res.salones.salon;
+          this.opcionesSalonesFiltrados = this.opcionesSalones;
+          this.ubicacionForm.get("salon")?.enable();
+        },
+        (err) => console.warn("cambioEdificio error", err)
+      );
     /*}*/
   }
 
@@ -1321,7 +1345,7 @@ export class HorarioCargaLectivaComponent implements OnInit, OnChanges {
   getActividades() {
     return new Promise((resolve, reject) => {
       this.planDocenteService
-        .get("actividad?query=activo:true&fields=nombre")
+        .get("actividad?query=activo:true&fields=nombre,codigo_abreviacion")
         .subscribe(
           (res: any) => {
             this.actividades = res.Data;
@@ -1604,9 +1628,9 @@ export class HorarioCargaLectivaComponent implements OnInit, OnChanges {
         item.idEspacioAcademico == colocacion?.EspacioAcademico?._id &&
         Number(item.horas) === Number(horarioColocacion?.horas) &&
         Number(item.finalPosition?.x) ===
-          Number(horarioColocacion?.finalPosition?.x) &&
+        Number(horarioColocacion?.finalPosition?.x) &&
         Number(item.finalPosition?.y) ===
-          Number(horarioColocacion?.finalPosition?.y)
+        Number(horarioColocacion?.finalPosition?.y)
       );
     });
   }
@@ -1676,16 +1700,16 @@ export class HorarioCargaLectivaComponent implements OnInit, OnChanges {
   private extraerNombreEspacioDesdeRespuesta(resp: any, fallback: string): string {
     return String(
       resp?.Data?.nombre ||
-        resp?.Data?.Nombre ||
-        resp?.Data?.EspacioAcademico ||
-        resp?.Data?.espacio_academico ||
-        resp?.Data?.[0]?.nombre ||
-        resp?.Data?.[0]?.Nombre ||
-        resp?.Data?.[0]?.EspacioAcademico ||
-        resp?.nombre ||
-        resp?.Nombre ||
-        resp?.EspacioAcademico ||
-        fallback
+      resp?.Data?.Nombre ||
+      resp?.Data?.EspacioAcademico ||
+      resp?.Data?.espacio_academico ||
+      resp?.Data?.[0]?.nombre ||
+      resp?.Data?.[0]?.Nombre ||
+      resp?.Data?.[0]?.EspacioAcademico ||
+      resp?.nombre ||
+      resp?.Nombre ||
+      resp?.EspacioAcademico ||
+      fallback
     );
   }
 
