@@ -117,7 +117,7 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
       await this.loadSelects();
       this.buildForm();
     } catch (err) {
-      this.popUpManager.showErrorToast(this.translate.instant("GLOBAL.error_carga"));
+      this.popUpManager.showErrorAlert(this.translate.instant("ERROR.persiste_error_comunique_OAS"));
     } finally {
       this.popUpManager.closeLoading();
     }

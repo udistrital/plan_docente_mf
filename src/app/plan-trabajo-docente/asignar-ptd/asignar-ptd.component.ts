@@ -152,7 +152,7 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
         );
       this.popUpManager.closeLoading();
     } catch (err) {
-      this.popUpManager.showErrorAlert(this.translate.instant("GLOBAL.error_carga"));
+      this.popUpManager.showErrorAlert(this.translate.instant("ERROR.persiste_error_comunique_OAS"));
     }
   }
 
@@ -295,66 +295,67 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
     }
   }
 
-  accionGestion(event: any) {
+  async accionGestion(event: any) {
     if (event.rowData.gestion.type == "editar") {
       this.canEdit = ACTIONS.EDIT;
     } else {
       this.canEdit = ACTIONS.VIEW;
     }
-    this.sgaPlanTrabajoDocenteMidService
-      .get(
-        `plan?docente=${event.rowData.docente_id}&vigencia=${event.rowData.periodo_id}&vinculacion=${event.rowData.tipo_vinculacion_id}`
-      )
-      .subscribe(
-        (res: any) => {
-          this.detalleAsignacion = res.Data;
-          this.dataDocente = {
-            Nombre: event.rowData.docente,
-            NombreCorto:
-              res.Data.docente.nombre1 && res.Data.docente.apellido1
-                ? res.Data.docente.nombre1 + " " + res.Data.docente.apellido1
-                : res.Data.docente.nombre,
-            Documento: event.rowData.identificacion,
-            Periodo: event.rowData.periodo_academico,
-            TipoVinculacion: event.rowData.tipo_vinculacion,
-            docente_id: event.rowData.docente_id,
-            periodo_id: event.rowData.periodo_id,
-            tipo_vinculacion_id: event.rowData.tipo_vinculacion_id,
-          };
-          this.checknloadRelatedPTD(
-            this.detalleAsignacion.planes_relacionados_query
-          );
-          if (
-            this.permisos['enviar_coordinador'] &&
-            event.rowData.estado === "Enviado a coordinación"
-          ) {
-            this.detalleAsignacion.aprobacion = this.estadosAprobar;
-            this.popUpManager.showPopUpGeneric(
-              this.translate.instant("ptd.aprobacion_plan_coordinacion"),
-              this.translate.instant("ptd.recordar_aprobar_plan"),
-              MODALS.INFO,
-              false
-            );
-          }
-          this.vista = VIEWS.FORM;
-          if (this.permisos['ver_gestion']) {
-            const modales = [];
-            if (this.canEdit == ACTIONS.VIEW) {
-              modales.push(this.translate.instant("ptd.info_modo_solo_ver"));
-            }
-            modales.push(
-              this.translate.instant("ptd.aviso_informativo_docente_p1") +
-              ".<br><br>" +
-              this.translate.instant("ptd.aviso_informativo_docente_p2") +
-              "."
-            );
-            //this.popUpManager.showManyPopUp(this.translate.instant('notas.docente'), modales, MODALS.INFO)
-          }
-        },
-        (error) => {
-          console.warn("error:", error);
-        }
+    this.popUpManager.showLoading();
+    try {
+      const res: any = await firstValueFrom(
+        this.sgaPlanTrabajoDocenteMidService.get(
+          `plan?docente=${event.rowData.docente_id}&vigencia=${event.rowData.periodo_id}&vinculacion=${event.rowData.tipo_vinculacion_id}`
+        )
       );
+      this.popUpManager.closeLoading();
+      this.detalleAsignacion = res.Data;
+      this.dataDocente = {
+        Nombre: event.rowData.docente,
+        NombreCorto:
+          res.Data.docente.nombre1 && res.Data.docente.apellido1
+            ? res.Data.docente.nombre1 + " " + res.Data.docente.apellido1
+            : res.Data.docente.nombre,
+        Documento: event.rowData.identificacion,
+        Periodo: event.rowData.periodo_academico,
+        TipoVinculacion: event.rowData.tipo_vinculacion,
+        docente_id: event.rowData.docente_id,
+        periodo_id: event.rowData.periodo_id,
+        tipo_vinculacion_id: event.rowData.tipo_vinculacion_id,
+      };
+      this.checknloadRelatedPTD(
+        this.detalleAsignacion.planes_relacionados_query
+      );
+      if (
+        this.permisos['enviar_coordinador'] &&
+        event.rowData.estado === "Enviado a coordinación"
+      ) {
+        this.detalleAsignacion.aprobacion = this.estadosAprobar;
+        this.popUpManager.showPopUpGeneric(
+          this.translate.instant("ptd.aprobacion_plan_coordinacion"),
+          this.translate.instant("ptd.recordar_aprobar_plan"),
+          MODALS.INFO,
+          false
+        );
+      }
+      this.vista = VIEWS.FORM;
+      if (this.permisos['ver_gestion']) {
+        const modales = [];
+        if (this.canEdit == ACTIONS.VIEW) {
+          modales.push(this.translate.instant("ptd.info_modo_solo_ver"));
+        }
+        modales.push(
+          this.translate.instant("ptd.aviso_informativo_docente_p1") +
+          ".<br><br>" +
+          this.translate.instant("ptd.aviso_informativo_docente_p2") +
+          "."
+        );
+      }
+    } catch (error) {
+      this.popUpManager.closeLoading();
+      console.warn("error:", error);
+      this.popUpManager.showErrorToast(this.translate.instant("GLOBAL.error_carga"));
+    }
   }
 
   accionEnviar(event: any) {
@@ -387,7 +388,7 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
       )
       .then(async (action) => {
         if (action.value) {
-          this.popUpManager.showLoading(this.translate.instant("GLOBAL.enviando"));
+          this.popUpManager.showLoading();
           try {
             await this.enviarSegunRol(
               canSendCoordinator,
@@ -494,117 +495,86 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
     }
   }
 
-  loadAsignaciones() {
+  async loadAsignaciones(): Promise<void> {
     if (this.permisos['asignaciones_coordinador']) {
       let url = "asignacion?vigencia=" + this.periodo.Id;
       if (this.proyecto && this.proyecto.Id && !this.roles.includes(ROLES.DOCENTE)) {
         url += "&proyecto=" + this.proyecto.Id;
       }
-      this.sgaPlanTrabajoDocenteMidService
-        .get(url)
-        .subscribe({
-          next: async (resp: RespFormat) => {
-            if (checkResponse(resp) && checkContent(resp)) {
-              const preasignaciones = await this.cargarPreasignacionesPeriodo();
-              this.preasignacionesPeriodo = preasignaciones;
-              let data = (resp.Data || []).map((row: any) => {
-                const semaforo = this.getSemaforoAsignacion(row, preasignaciones);
-                const enviar = this.construirAccionEnviar(row, preasignaciones);
-                const estado = row?.estado
-                  ? row.estado.toString().toLowerCase()
-                  : "";
-                const isNoAprobado = estado.indexOf("no aprobado") > -1;
-                if (this.permisos['ver_gestion'] && (isNoAprobado || row.estado === "Enviado a docente") && row.gestion) {
-                  return { ...row, gestion: { ...row.gestion, type: "ver" }, semaforo, enviar };
-                }
 
-                return {
-                  ...row,
-                  semaforo,
-                  enviar,
-                };
-              });
-
-              this.dataSource = new MatTableDataSource(data);
-            } else {
-              this.dataSource = new MatTableDataSource();
-              this.popUpManager.showErrorAlert(
-                this.translate.instant("ptd.error_no_found_asignaciones")
-              );
-            }
-          },
-          error: (err) => {
-            this.dataSource = new MatTableDataSource();
-            this.popUpManager.showErrorAlert(
-              this.translate.instant("ptd.error_no_found_asignaciones")
-            );
-          },
-        });
-    } else if (this.permisos['asignaciones_docente']) {
-      this.userService
-        .getPersonaId()
-        .then((id_tercero) => {
-          let url = "asignacion/docente?docente=" + id_tercero + "&vigencia=" + this.periodo.Id;
-          if (this.proyecto && this.proyecto.Id && !this.roles.includes(ROLES.DOCENTE)) {
-            url += "&proyecto=" + this.proyecto.Id;
-          }
-          this.sgaPlanTrabajoDocenteMidService
-            .get(url)
-            .subscribe({
-              next: (resp: RespFormat) => {
-                if (checkResponse(resp) && checkContent(resp)) {
-                  let data = (resp.Data || []).map((row: any) => {
-                    const semaforo = this.getSemaforoAsignacion(row);
-                    const enviar = this.construirAccionEnviar(row);
-                    const estado = row?.estado
-                      ? row.estado.toString().toLowerCase()
-                      : "";
-                    const isNoAprobado = estado.indexOf("no aprobado") > -1;
-
-                    if (this.permisos['ver_gestion'] && isNoAprobado && row.gestion) {
-                      return {
-                        ...row,
-                        gestion: { ...row.gestion, type: "ver" },
-                        semaforo,
-                        enviar,
-                      };
-                    }
-
-                    return {
-                      ...row,
-                      semaforo,
-                      enviar,
-                    };
-                  });
-
-                  this.dataSource = new MatTableDataSource(data);
-                } else {
-                  this.dataSource = new MatTableDataSource();
-                  this.popUpManager.showErrorAlert(
-                    this.translate.instant("ptd.error_no_found_asignaciones")
-                  );
-                }
-              },
-              error: (err) => {
-                this.dataSource = new MatTableDataSource();
-                this.popUpManager.showErrorAlert(
-                  this.translate.instant("ptd.error_no_found_asignaciones")
-                );
-              },
-            });
-        })
-        .catch((err) => {
-          this.dataSource = new MatTableDataSource();
-          this.popUpManager.showErrorToast(
-            this.translate.instant("GLOBAL.error_no_found_tercero_id")
-          );
-        });
-    } else {
-      this.dataSource = new MatTableDataSource();
-      this.popUpManager.showErrorAlert(
-        this.translate.instant('GLOBAL.acceso_denegado')
+      const resp: RespFormat = await firstValueFrom(
+        this.sgaPlanTrabajoDocenteMidService.get(url)
       );
+
+      if (checkResponse(resp) && checkContent(resp)) {
+        const preasignaciones = await this.cargarPreasignacionesPeriodo();
+        this.preasignacionesPeriodo = preasignaciones;
+        const data = (resp.Data || []).map((row: any) => {
+          const semaforo = this.getSemaforoAsignacion(row, preasignaciones);
+          const enviar = this.construirAccionEnviar(row, preasignaciones);
+          const estado = row?.estado ? row.estado.toString().toLowerCase() : "";
+          const isNoAprobado = estado.indexOf("no aprobado") > -1;
+          if (this.permisos['ver_gestion'] && (isNoAprobado || row.estado === "Enviado a docente") && row.gestion) {
+            return { ...row, gestion: { ...row.gestion, type: "ver" }, semaforo, enviar };
+          }
+
+          return {
+            ...row,
+            semaforo,
+            enviar,
+          };
+        });
+
+        this.dataSource = new MatTableDataSource(data);
+        return;
+      }
+
+      this.dataSource = new MatTableDataSource();
+      throw new Error(this.translate.instant("ptd.error_no_found_asignaciones"));
+    } else if (this.permisos['asignaciones_docente']) {
+      const id_tercero = await this.userService.getPersonaId();
+      let url = "asignacion/docente?docente=" + id_tercero + "&vigencia=" + this.periodo.Id;
+      if (this.proyecto && this.proyecto.Id && !this.roles.includes(ROLES.DOCENTE)) {
+        url += "&proyecto=" + this.proyecto.Id;
+      }
+
+      const resp: RespFormat = await firstValueFrom(
+        this.sgaPlanTrabajoDocenteMidService.get(url)
+      );
+
+      if (checkResponse(resp) && checkContent(resp)) {
+        const data = (resp.Data || []).map((row: any) => {
+          const semaforo = this.getSemaforoAsignacion(row);
+          const enviar = this.construirAccionEnviar(row);
+          const estado = row?.estado ? row.estado.toString().toLowerCase() : "";
+          const isNoAprobado = estado.indexOf("no aprobado") > -1;
+
+          if (this.permisos['ver_gestion'] && isNoAprobado && row.gestion) {
+            return {
+              ...row,
+              gestion: { ...row.gestion, type: "ver" },
+              semaforo,
+              enviar,
+            };
+          }
+
+          return {
+            ...row,
+            semaforo,
+            enviar,
+          };
+        });
+
+        this.dataSource = new MatTableDataSource(data);
+        return;
+      }
+
+      this.dataSource = new MatTableDataSource();
+      throw new Error(this.translate.instant("ptd.error_no_found_asignaciones"));
     }
+
+    this.dataSource = new MatTableDataSource();
+    throw new Error(this.translate.instant('GLOBAL.acceso_denegado'));
   }
 
   get esCoordinadorAsignacion(): boolean {
@@ -733,7 +703,7 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
     }
   }
 
-  selectPeriodo(periodo: MatSelectChange) {
+  async selectPeriodo(periodo: MatSelectChange) {
     this.periodo = periodo.value;
     this.dataSource = new MatTableDataSource();
     if (this.periodo.Id) {
@@ -743,7 +713,15 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
         this.popUpManager.showErrorToast("El periodo seleccionado no se encuentra en el rango de fechas.");
         return;
       }
-      this.loadAsignaciones();
+      this.popUpManager.showLoading();
+      try {
+        await this.loadAsignaciones();
+      } catch (err) {
+        console.warn('Error en loadAsignaciones desde selectPeriodo:', err);
+        this.popUpManager.showErrorToast(this.translate.instant("ERROR.persiste_error_comunique_OAS"));
+      } finally {
+        this.popUpManager.closeLoading();
+      }
     }
   }
 
@@ -888,7 +866,7 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
             throw new Error(this.translate.instant("ptd.error_enviar_plan"));
           }
         }
-        this.loadAsignaciones();
+        await this.loadAsignaciones();
       } catch (err_p) {
         throw err_p;
       }
