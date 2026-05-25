@@ -339,19 +339,54 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
     this.nuevoEditarConsolidado(event.rowData.ConsolidadoJson);
   }
 
-  accionEnviar(event: any) {
+  async accionEnviar(event: any) {
     if (!this.permisos['enviar_coordinador_consolidado']) {
       this.popUpManager.showErrorAlert(
         this.translate.instant('GLOBAL.acceso_denegado')
       );
       return;
     }
+    const consolidado = event.rowData.ConsolidadoJson;
 
-    let putPlan = _cloneDeep(event.rowData.ConsolidadoJson);
-    const estado = this.estadosConsolidado.opciones.find(
+    // Obtener el id del estado 'ENV'
+    const estadoEnv = this.estadosConsolidado.opciones.find(
       (estado) => estado.codigo_abreviacion === "ENV"
     );
-    putPlan.estado_consolidado_id = estado._id;
+    if (!estadoEnv) {
+      this.popUpManager.showErrorAlert(
+        this.translate.instant("ptd.fallo_actualizar_consolidado")
+      );
+      return;
+    }
+
+    // Verificar que no exista otro consolidado en estado 'ENV' para mismo periodo y proyecto
+    try {
+      const periodoId = consolidado.periodo_id || this.periodos.select?.Id;
+      const proyectoId = consolidado.proyecto_academico_id || this.proyectos.select?.Id || 0;
+      const query = `consolidado_docente?query=activo:true,periodo_id:${periodoId},proyecto_academico_id:${proyectoId},estado_consolidado_id:${estadoEnv._id}&limit=0`;
+      const resp: any = await firstValueFrom(this.planTrabajoDocenteService.get(query));
+      const existentes: any[] = resp?.Data ?? [];
+      const otrosEnviados = existentes.filter((c: any) => String(c._id) !== String(consolidado._id));
+      if (otrosEnviados.length > 0) {
+        this.popUpManager.showPopUpGeneric(
+          "",
+          "Ya existe otro consolidado en estado 'Enviado' para este periodo y proyecto. No es posible realizar el envío.",
+          MODALS.INFO,
+          false
+        );
+        return;
+      }
+    } catch (err) {
+      console.warn('Error verificando consolidado enviado existente:', err);
+      this.popUpManager.showErrorAlert(
+        this.translate.instant("ptd.fallo_actualizar_consolidado")
+      );
+      return;
+    }
+
+    // Si pasa la verificación, proceder a cambiar el estado a ENV
+    let putPlan = _cloneDeep(consolidado);
+    putPlan.estado_consolidado_id = estadoEnv._id;
     this.planTrabajoDocenteService
       .put("consolidado_docente/" + putPlan._id, putPlan)
       .subscribe(
