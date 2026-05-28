@@ -390,24 +390,12 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
       return;
     }
 
-    // Si pasa la verificación, proceder a cambiar el estado a ENV
-    let putPlan = _cloneDeep(consolidado);
-    putPlan.estado_consolidado_id = estadoEnv._id;
-    this.planTrabajoDocenteService
-      .put("consolidado_docente/" + putPlan._id, putPlan)
-      .subscribe(
-        (resp) => {
-          this.popUpManager.showSuccessAlert(
-            this.translate.instant("ptd.actualizar_consolidado_ok")
-          );
-          this.listarConsolidados();
-        },
-        (err) => {
-          console.warn(err);
-          this.popUpManager.showErrorAlert(
-            this.translate.instant("ptd.fallo_actualizar_consolidado")
-          );
-        }
+    try {
+      // Si pasa la verificación, proceder a cambiar el estado a ENV
+      const putPlan = _cloneDeep(consolidado);
+      putPlan.estado_consolidado_id = estadoEnv._id;
+      await firstValueFrom(
+        this.planTrabajoDocenteService.put("consolidado_docente/" + putPlan._id, putPlan)
       );
       this.popUpManager.closeLoading();
       this.popUpManager.showSuccessAlert(

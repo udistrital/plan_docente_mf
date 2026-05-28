@@ -142,12 +142,6 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
   
         if (evento) {
             this.codigoEventoPTD = evento.CodigoEvento;
-              this.cargarCalendarioEventos().then(eventosCalendario => {
-              this.calendarEventosPTD = eventosCalendario;
-              this.resolverProyectosDesdeCalendario();
-              this.verificarRangoFechas();
-              this.intentarListarConsolidados();
-            }).catch(err => console.warn(err));
           }
       }
     }

@@ -147,14 +147,6 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
         this.cargarEstadosPlan()
 
       ]);
-      this.periodos = periodos;
-      this.estadosPlan = estadosPlan;
-      this.estadosAprobar =
-        this.estadosPlan.filter(
-          (estado) =>
-            estado.codigo_abreviacion === "APR" ||
-            estado.codigo_abreviacion === "N_APR"
-        );
       this.popUpManager.closeLoading();
     } catch (err) {
       this.popUpManager.showErrorAlert(this.translate.instant("ERROR.persiste_error_comunique_OAS"));
@@ -366,31 +358,6 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
             );
             //this.popUpManager.showManyPopUp(this.translate.instant('notas.docente'), modales, MODALS.INFO)
           }
-      if (
-        this.permisos['enviar_coordinador'] &&
-        event.rowData.estado === "Enviado a coordinación"
-      ) {
-        this.detalleAsignacion.aprobacion = this.estadosAprobar;
-        this.popUpManager.showPopUpGeneric(
-          this.translate.instant("ptd.aprobacion_plan_coordinacion"),
-          this.translate.instant("ptd.recordar_aprobar_plan"),
-          MODALS.INFO,
-          false
-        );
-      }
-      this.vista = VIEWS.FORM;
-      if (this.permisos['ver_gestion']) {
-        const modales = [];
-        if (this.canEdit == ACTIONS.VIEW) {
-          modales.push(this.translate.instant("ptd.info_modo_solo_ver"));
-        }
-        modales.push(
-          this.translate.instant("ptd.aviso_informativo_docente_p1") +
-          ".<br><br>" +
-          this.translate.instant("ptd.aviso_informativo_docente_p2") +
-          "."
-        );
-      }
     } catch (error) {
       this.popUpManager.closeLoading();
       console.warn("error:", error);

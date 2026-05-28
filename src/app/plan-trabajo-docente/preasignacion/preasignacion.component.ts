@@ -97,7 +97,7 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
 
   async ngOnInit() {
     this.popUpManager.showLoading();
-    try{
+    try {
       await this.cargarEventoPTD();
       // Espera roles
       const roles = await this.userService.getUserRoles();
@@ -108,38 +108,22 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
         observables[opcion] =
           this.permisosUtils.tienePermiso(this.roles, opcion);
       });
-      const resultados = await firstValueFrom(forkJoin(observables));
-      this.permisos = resultados;
+      this.permisos = await firstValueFrom(forkJoin(observables));
       console.log('Permisos:', this.permisos);
       
       // Inicializar vistaActiva basado en permisos
       if (!this.permisos['tabla_docente'] && this.permisos['tabla_coordinador']) {
         this.vistaActiva = 'coordinador';
       } else {
-        this.vistaActiva = 'docente'; // Por defecto docente si tiene el permiso
+        this.vistaActiva = 'docente';
       }
-    });
-    this.cargarPeriodo()
-      .then((resp) => (this.periodos = resp))
-      .catch((err) => {
-        this.popUpManager.showErrorToast(
-          this.translate.instant("GLOBAL.sin_periodo")
-        );
-        this.periodos = [];
-      });
-
-      });
-      // Espera todos los permisos
-      this.permisos = await firstValueFrom(
-        forkJoin(observables)
-      );
-      this.periodos =await this.cargarPeriodo();
+      this.periodos = await this.cargarPeriodo();
       this.dialogConfig.width = "65vw";
       this.dialogConfig.minWidth = "700px";
       this.dialogConfig.height = "65vh";
       this.dialogConfig.maxHeight = "615px";
       this.dialogConfig.data = {};
-    }catch(err){
+    } catch (err) {
       this.popUpManager.showErrorAlert(this.translate.instant("ERROR.persiste_error_comunique_OAS"));
     } finally {
       this.popUpManager.closeLoading();
@@ -723,7 +707,9 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
                   this.translate.instant("ptd.aprobacion_preasignacion")
                 );
               } else {
-                req["no-preasignaciones"].push({ Id: preasignacion.id });
+                this.popUpManager.showErrorAlert(
+                  this.translate.instant("ptd.error_aprobacion_preasignacion")
+                );
               }
               this.loadPreasignaciones();
             },
