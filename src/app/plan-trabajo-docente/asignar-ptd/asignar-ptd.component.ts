@@ -25,10 +25,10 @@ import { PermisosUtils } from "src/app/utils/role-permissions";
 import { AcademicaJbpmService } from "src/app/services/academica-jbpm.service";
 
 @Component({
-    selector: "app-asignar-ptd",
-    templateUrl: "./asignar-ptd.component.html",
-    styleUrls: ["./asignar-ptd.component.scss"],
-    standalone: false
+  selector: "app-asignar-ptd",
+  templateUrl: "./asignar-ptd.component.html",
+  styleUrls: ["./asignar-ptd.component.scss"],
+  standalone: false
 })
 export class AsignarPtdComponent implements OnInit, AfterViewInit {
   readonly VIEWS = VIEWS;
@@ -105,15 +105,22 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
     this.dataSource = new MatTableDataSource();
   }
 
-  ngOnInit() {
-    this.cargarEventoPTD();
-    this.userService.getUserRoles().then(async (roles) => {
+  async ngOnInit() {
+    this.popUpManager.showLoading();
+    try {
+      await this.cargarEventoPTD();
+      // Espera roles
+      const roles = await this.userService.getUserRoles();
       this.roles = roles;
       // Construcción observables permisos
       const observables: { [key: string]: Observable<boolean> } = {};
       this.opcionesPermisos.forEach(opcion => {
         observables[opcion] =
-          this.permisosUtils.tienePermiso(roles, opcion);
+          this.permisosUtils.tienePermiso(
+            roles,
+            opcion
+          );
+
       });
       const resultados = await firstValueFrom(forkJoin(observables));
       this.permisos = resultados;
@@ -127,46 +134,53 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
       
       // Cargar proyectos del coordinador si tiene permiso
       if (this.permisos['enviar_coordinador']) {
-        try {
-          this.proyectosCoordinador = await this.obtenerProyectosCoordinador();
-        } catch (err) {
-          console.warn("No fue posible obtener proyectos del coordinador", err);
-          this.proyectosCoordinador = [];
-        }
+        this.proyectosCoordinador =
+          await this.obtenerProyectosCoordinador();
       }
-    });
-    this.cargarPeriodo()
-      .then((resp) => (this.periodos = resp))
-      .catch((err) => {
-        this.popUpManager.showErrorToast(
-          this.translate.instant("GLOBAL.sin_periodo")
-        );
-        this.periodos = [];
-      });
-    this.cargarEstadosPlan().then((estados) => {
-      this.estadosPlan = estados;
-    });
+      // Paralelo porque son independientes
+      const [
+        periodos,
+        estadosPlan
+      ] = await Promise.all([
+
+        this.cargarPeriodo(),
+        this.cargarEstadosPlan()
+
+      ]);
+      this.popUpManager.closeLoading();
+    } catch (err) {
+      this.popUpManager.showErrorAlert(this.translate.instant("ERROR.persiste_error_comunique_OAS"));
+    }
   }
 
-  cargarEventoPTD() {
-    this.sgaPlanTrabajoDocenteMidService.get("calendario/eventos").subscribe({
-      next: (resp: any) => {
-        if (checkContent(resp)) {
-          const eventos = Array.isArray(resp.Data) ? resp.Data : [];
-          const evento = eventos.find((e: any) => e.Descripcion === "PLANES DE TRABAJO DOCENTES");
-          if (evento) {
-            this.codigoEventoPTD = evento.CodigoEvento;
-            this.cargarCalendarioEventos().then(eventosCalendario => {
-              this.calendarEventosPTD = eventosCalendario;
-              this.resolverProyectosDesdeCalendario();
-            }).catch(err => console.warn(err));
-          }
-        }
-      },
-      error: (err: any) => {
-        console.warn("Error obteniendo calendario/eventos:", err);
+  async cargarEventoPTD(): Promise<void> {
+    const resp: any = await firstValueFrom(
+      this.sgaPlanTrabajoDocenteMidService.get("calendario/eventos")
+    );
+
+    if (checkContent(resp)) {
+
+      const eventos = Array.isArray(resp.Data)
+        ? resp.Data
+        : [];
+
+      const evento = eventos.find(
+        (e: any) =>
+          e.Descripcion === "PLANES DE TRABAJO DOCENTES"
+      );
+
+      if (evento) {
+
+        this.codigoEventoPTD = evento.CodigoEvento;
+
+        const eventosCalendario =
+          await this.cargarCalendarioEventos();
+
+        this.calendarEventosPTD = eventosCalendario;
+
+        this.resolverProyectosDesdeCalendario();
       }
-    });
+    }
   }
 
   cargarCalendarioEventos(): Promise<any[]> {
@@ -299,36 +313,38 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
     }
   }
 
-  accionGestion(event: any) {
+  async accionGestion(event: any) {
     if (event.rowData.gestion.type == "editar") {
       this.canEdit = ACTIONS.EDIT;
     } else {
       this.canEdit = ACTIONS.VIEW;
     }
-    this.sgaPlanTrabajoDocenteMidService
-      .get(
-        `plan?docente=${event.rowData.docente_id}&vigencia=${event.rowData.periodo_id}&vinculacion=${event.rowData.tipo_vinculacion_id}`
-      )
-      .subscribe(
-        (res: any) => {
-          this.detalleAsignacion = res.Data;
-          this.dataDocente = {
-            Nombre: event.rowData.docente,
-            NombreCorto:
-              res.Data.docente.nombre1 && res.Data.docente.apellido1
-                ? res.Data.docente.nombre1 + " " + res.Data.docente.apellido1
-                : res.Data.docente.nombre,
-            Documento: event.rowData.identificacion,
-            Periodo: event.rowData.periodo_academico,
-            TipoVinculacion: event.rowData.tipo_vinculacion,
-            docente_id: event.rowData.docente_id,
-            periodo_id: event.rowData.periodo_id,
-            tipo_vinculacion_id: event.rowData.tipo_vinculacion_id,
-          };
-          this.checknloadRelatedPTD(
-            this.detalleAsignacion.planes_relacionados_query
-          );
-          this.vista = VIEWS.FORM;
+    this.popUpManager.showLoading();
+    try {
+      const res: any = await firstValueFrom(
+        this.sgaPlanTrabajoDocenteMidService.get(
+          `plan?docente=${event.rowData.docente_id}&vigencia=${event.rowData.periodo_id}&vinculacion=${event.rowData.tipo_vinculacion_id}`
+        )
+      );
+      this.popUpManager.closeLoading();
+      this.detalleAsignacion = res.Data;
+      this.dataDocente = {
+        Nombre: event.rowData.docente,
+        NombreCorto:
+          res.Data.docente.nombre1 && res.Data.docente.apellido1
+            ? res.Data.docente.nombre1 + " " + res.Data.docente.apellido1
+            : res.Data.docente.nombre,
+        Documento: event.rowData.identificacion,
+        Periodo: event.rowData.periodo_academico,
+        TipoVinculacion: event.rowData.tipo_vinculacion,
+        docente_id: event.rowData.docente_id,
+        periodo_id: event.rowData.periodo_id,
+        tipo_vinculacion_id: event.rowData.tipo_vinculacion_id,
+      };
+      this.checknloadRelatedPTD(
+        this.detalleAsignacion.planes_relacionados_query
+      );
+      this.vista = VIEWS.FORM;
           if (this.permisos['ver_gestion']) {
             const modales = [];
             if (this.canEdit == ACTIONS.VIEW) {
@@ -342,11 +358,11 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
             );
             //this.popUpManager.showManyPopUp(this.translate.instant('notas.docente'), modales, MODALS.INFO)
           }
-        },
-        (error) => {
-          console.warn("error:", error);
-        }
-      );
+    } catch (error) {
+      this.popUpManager.closeLoading();
+      console.warn("error:", error);
+      this.popUpManager.showErrorToast(this.translate.instant("GLOBAL.error_carga"));
+    }
   }
 
   accionEnviar(event: any) {
@@ -378,13 +394,25 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
         MODALS.WARNING,
         false
       )
-      .then((action) => {
+      .then(async (action) => {
         if (action.value) {
-          this.enviarSegunRol(
-            coordinador,
-            event.rowData.plan_docente_id,
-            event.rowData
-          );
+          this.popUpManager.showLoading();
+          try {
+            await this.enviarSegunRol(
+              coordinador,
+              event.rowData.plan_docente_id,
+              event.rowData
+            );
+            this.popUpManager.closeLoading();
+            this.popUpManager.showSuccessAlert(
+              this.translate.instant("ptd.plan_enviado_ok")
+            );
+          } catch (err) {
+            this.popUpManager.closeLoading();
+            console.warn('Error en enviarSegunRol desde accionEnviar:', err);
+            const mensajeError = (err as any)?.message || this.translate.instant("ptd.error_enviar_plan");
+            this.popUpManager.showErrorAlert(mensajeError);
+          }
         }
       });
   }
@@ -748,7 +776,7 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
     }
   }
 
-  selectPeriodo(periodo: MatSelectChange) {
+  async selectPeriodo(periodo: MatSelectChange) {
     this.periodo = periodo.value;
     this.dataSource = new MatTableDataSource();
     this.preasignacionesPeriodo = [];
@@ -762,7 +790,15 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
         this.popUpManager.showErrorToast("El periodo seleccionado no se encuentra en el rango de fechas.");
         return;
       }
-      this.loadAsignaciones();
+      this.popUpManager.showLoading();
+      try {
+        await this.loadAsignaciones();
+      } catch (err) {
+        console.warn('Error en loadAsignaciones desde selectPeriodo:', err);
+        this.popUpManager.showErrorToast(this.translate.instant("ERROR.persiste_error_comunique_OAS"));
+      } finally {
+        this.popUpManager.closeLoading();
+      }
     }
   }
 
@@ -785,7 +821,7 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
     });
   }
 
-  enviarSegunRol(coordinador: boolean, id_plan: string, rowData?: any) {
+  async enviarSegunRol(coordinador: boolean, id_plan: string, rowData?: any): Promise<void> {
     const TIEMPO_COMPLETO = [
       'DCTC',
       'TCO',
@@ -799,139 +835,121 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
     const estado = this.estadosPlan.find(
       (estado) => estado.codigo_abreviacion === cod_abrev
     );
-    if (estado) {
-      this.planTrabajoDocenteService.get("plan_docente/" + id_plan).subscribe({
-        next: async (res_g) => {
-          // Validaciones solo cuando lo envía el docente
-          if (!coordinador) {
-            let planToValidate: any = null;
-            try {
-              const planResp: any = await firstValueFrom(
-                this.sgaPlanTrabajoDocenteMidService.get(
-                  `plan?docente=${rowData?.docente_id}&vigencia=${rowData?.periodo_id}&vinculacion=${rowData?.tipo_vinculacion_id}`
-                )
-              );
-              planToValidate = planResp?.Data;
-            } catch (error) {
-              console.warn('No fue posible cargar el plan para validación de horas', error);
-              this.popUpManager.showErrorAlert('No fue posible cargar el plan para validar las horas.');
-              return;
-            }
 
-            if (!planToValidate) {
-              this.popUpManager.showErrorAlert('No se encontró el plan para validación de horas.');
-              return;
-            }
+    if (!estado) return;
 
-            const vinculacionId = String(planToValidate.tipo_vinculacion?.[0]?.id || planToValidate.tipo_vinculacion || '').trim();
-            const cargaItems = Array.isArray(planToValidate.carga?.[0]) ? planToValidate.carga[0] : [];
-            const totalHoras = cargaItems.reduce((sum: number, item: any) => {
-              const horas = Number(item?.horario?.horas);
-              return sum + (Number.isNaN(horas) ? 0 : horas);
-            }, 0);
+    try {
+      const res_g: any = await firstValueFrom(
+        this.planTrabajoDocenteService.get("plan_docente/" + id_plan)
+      );
 
-            if (!vinculacionId) {
-              this.popUpManager.showErrorAlert('No se encontró el tipo de vinculación para validación de horas.');
-              return;
-            }
-            let codigoAbreviacion: string | null = null;
-            try {
-              const parametroResp: any = await firstValueFrom(
-                this.parametrosService.get(
-                  `parametro?query=Id:${vinculacionId}&fields=CodigoAbreviacion`
-                )
-              );
-              codigoAbreviacion =
-                parametroResp?.Data?.[0]?.CodigoAbreviacion || null;
-
-            } catch (error) {
-              console.warn('No fue posible cargar el parámetro', error);
-              this.popUpManager.showErrorAlert(
-                'No fue posible consultar el tipo de vinculación.'
-              );
-              return;
-            }
-            const VINCULACIONES_VALIDACION = [...TIEMPO_COMPLETO, ...MEDIO_TIEMPO];
-            if (!VINCULACIONES_VALIDACION.includes(codigoAbreviacion ?? '')) {
-              this.popUpManager.showErrorAlert(
-                'Tipo de vinculación no reconocido para validación de horas.'
-              );
-              return;
-            }
-            if (TIEMPO_COMPLETO.includes(codigoAbreviacion ?? '')) {
-              if (totalHoras !== 40) {
-                this.popUpManager.showErrorAlert(
-                  `El total de horas debe ser 40 para tiempo completo, pero el plan tiene ${totalHoras}.`
-                );
-                return;
-              }
-            } 
-            else if (MEDIO_TIEMPO.includes(codigoAbreviacion ?? '')) {
-              if (totalHoras !== 20) {
-                this.popUpManager.showErrorAlert(
-                  `El total de horas debe ser 20 para medio tiempo, pero el plan tiene ${totalHoras}.`
-                );
-                return;
-              }
-            } 
-            else {
-              this.popUpManager.showErrorAlert(
-                'Tipo de vinculación no reconocido para validación de horas.'
-              );
-              return;
-            }
-          }
-          if (coordinador) {
-            const cargaAutomaticaOk = await this.persistirCargaAutomaticaDesdePreasignacion(
-              rowData,
-              id_plan,
-              res_g?.Data
-            );
-            if (!cargaAutomaticaOk) {
-              if (!this.errorCargaAutomaticaMostrado) {
-                this.popUpManager.showErrorAlert(
-                  this.translate.instant("ptd.error_enviar_plan")
-                );
-              }
-              return;
-            }
-          }
-
-          if (!coordinador) {
-            let respuestaJson = res_g.Data.respuesta
-              ? JSON.parse(res_g.Data.respuesta)
-              : {};
-            respuestaJson["DocenteAprueba"] = new Date().toLocaleString(
-              "es-CO",
-              { timeZone: "America/Bogota" }
-            );
-            res_g.Data.respuesta = JSON.stringify(respuestaJson);
-          }
-          res_g.Data.estado_plan_id = estado._id;
-          this.planTrabajoDocenteService
-            .put("plan_docente/" + id_plan, res_g.Data)
-            .subscribe({
-              next: async (res_p) => {
-                this.popUpManager.showSuccessAlert(
-                  this.translate.instant("ptd.plan_enviado_ok")
-                );
-                this.loadAsignaciones();
-              },
-              error: (err_p) => {
-                this.popUpManager.showErrorAlert(
-                  this.translate.instant("ptd.error_enviar_plan")
-                );
-                console.warn("putfail", err_p);
-              },
-            });
-        },
-        error: (err_g) => {
-          this.popUpManager.showErrorAlert(
-            this.translate.instant("ptd.error_enviar_plan")
+      // Validaciones solo cuando lo envía el docente
+      if (!coordinador) {
+        let planToValidate: any = null;
+        try {
+          const planResp: any = await firstValueFrom(
+            this.sgaPlanTrabajoDocenteMidService.get(
+              `plan?docente=${rowData?.docente_id}&vigencia=${rowData?.periodo_id}&vinculacion=${rowData?.tipo_vinculacion_id}`
+            )
           );
-          console.warn("getfail", err_g);
-        },
-      });
+          planToValidate = planResp?.Data;
+        } catch (error) {
+          console.warn('No fue posible cargar el plan para validación de horas', error);
+          throw new Error('No fue posible cargar el plan para validación de horas');;
+        }
+
+        if (!planToValidate) {
+          throw new Error('Plan para validación no encontrado');
+        }
+
+        const vinculacionId = String(planToValidate.tipo_vinculacion?.[0]?.id || planToValidate.tipo_vinculacion || '').trim();
+        const cargaItems = Array.isArray(planToValidate.carga?.[0]) ? planToValidate.carga[0] : [];
+        const totalHoras = cargaItems.reduce((sum: number, item: any) => {
+          const horas = Number(item?.horario?.horas);
+          return sum + (Number.isNaN(horas) ? 0 : horas);
+        }, 0);
+
+        if (!vinculacionId) {
+          throw new Error('No se encontró el tipo de vinculación para validación de horas.');
+        }
+        let codigoAbreviacion: string | null = null;
+        try {
+          const parametroResp: any = await firstValueFrom(
+            this.parametrosService.get(
+              `parametro?query=Id:${vinculacionId}&fields=CodigoAbreviacion`
+            )
+          );
+          codigoAbreviacion =
+            parametroResp?.Data?.[0]?.CodigoAbreviacion || null;
+
+        } catch (error) {
+          console.warn('No fue posible cargar el parámetro', error);
+          throw new Error('No fue posible consultar el tipo de vinculación.');
+        }
+        const VINCULACIONES_VALIDACION = [...TIEMPO_COMPLETO, ...MEDIO_TIEMPO];
+        if (VINCULACIONES_VALIDACION.includes(codigoAbreviacion ?? '')) {
+          if (TIEMPO_COMPLETO.includes(codigoAbreviacion ?? '')) {
+            if (totalHoras !== 40) {
+              throw new Error(`El total de horas debe ser 40 para tiempo completo, pero el plan tiene ${totalHoras}.`);
+            }
+          }
+          else if (MEDIO_TIEMPO.includes(codigoAbreviacion ?? '')) {
+            if (totalHoras !== 20) {
+              throw new Error(`El total de horas debe ser 20 para medio tiempo, pero el plan tiene ${totalHoras}.`);
+            }
+          }
+        }
+      }
+
+      if (coordinador) {
+        const cargaAutomaticaOk = await this.persistirCargaAutomaticaDesdePreasignacion(
+          rowData,
+          id_plan,
+          res_g?.Data
+        );
+        if (!cargaAutomaticaOk) {
+          if (!this.errorCargaAutomaticaMostrado) {
+            this.popUpManager.showErrorAlert(
+              this.translate.instant("ptd.error_enviar_plan")
+            );
+          }
+          throw new Error('Error al persistir carga automática');
+        }
+      }
+
+      if (!coordinador) {
+        let respuestaJson = res_g.Data.respuesta
+          ? JSON.parse(res_g.Data.respuesta)
+          : {};
+        respuestaJson["DocenteAprueba"] = new Date().toLocaleString(
+          "es-CO",
+          { timeZone: "America/Bogota" }
+        );
+        res_g.Data.respuesta = JSON.stringify(respuestaJson);
+      }
+      res_g.Data.estado_plan_id = estado._id;
+
+      try {
+        const res_p: any = await firstValueFrom(
+          this.planTrabajoDocenteService.put("plan_docente/" + id_plan, res_g.Data)
+        );
+
+        if (coordinador) {
+          const preasignacionesActualizadas = await this.marcarPreasignacionesComoAprobadasPorCoordinacion(
+            rowData
+          );
+
+          if (!preasignacionesActualizadas) {
+            throw new Error(this.translate.instant("ptd.error_enviar_plan"));
+          }
+        }
+        await this.loadAsignaciones();
+      } catch (err_p) {
+        throw err_p;
+      }
+
+    } catch (err_g) {
+      throw err_g;
     }
   }
 
@@ -975,13 +993,13 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
             ef => (ef.id || ef._id) === (e.id || e._id)
           )
         );
-        
+
         if (espaciosFueraProyecto.length > 0) {
           const nombresFuera = espaciosFueraProyecto
             .map(e => `• ${e.espacio_academico || e.nombre}`)
             .join("<br>");
-          
-          await this.popUpManager.showPopUpGeneric(
+
+          this.popUpManager.showPopUpGeneric(
             this.translate.instant("ptd.carga_automatica_parcial"),
             `${this.translate.instant("ptd.espacios_fuera_proyecto_coordinador")}<br><br>${nombresFuera}`,
             MODALS.INFO,
@@ -1426,9 +1444,9 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
     const nombreMateria = (carga: any): string => {
       const nombre = String(
         carga?.espacio_academico_nombre ||
-          carga?.espacio_academico ||
-          carga?.nombre ||
-          ""
+        carga?.espacio_academico ||
+        carga?.nombre ||
+        ""
       ).trim();
 
       if (nombre) {
@@ -1531,9 +1549,9 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
         bloque: obtenerBloque(carga),
       }))
       .filter((registro: any) => !!registro.bloque)) as Array<{
-      nombre: string;
-      bloque: { dia: number; inicio: number; fin: number };
-    }>;
+        nombre: string;
+        bloque: { dia: number; inicio: number; fin: number };
+      }>;
 
     const registrosActuales = ((cargaActual || [])
       .map((carga: any) => ({
@@ -1541,9 +1559,9 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
         bloque: obtenerBloque(carga),
       }))
       .filter((registro: any) => !!registro.bloque)) as Array<{
-      nombre: string;
-      bloque: { dia: number; inicio: number; fin: number };
-    }>;
+        nombre: string;
+        bloque: { dia: number; inicio: number; fin: number };
+      }>;
 
     registrosNuevos.forEach((registroNuevo: any, idxNuevo: number) => {
       registrosActuales.forEach((registroActual: any) => {

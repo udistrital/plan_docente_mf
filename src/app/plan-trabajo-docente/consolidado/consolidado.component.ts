@@ -116,9 +116,11 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
     this.respuestaConsolidado = false;
   }
 
-  ngOnInit() {
-    this.cargarEventoPTD();
-    this.userService.getUserRoles().then(async (roles) => {
+  async ngOnInit() {
+    this.popUpManager.showLoading();
+    try {
+      await this.cargarEventoPTD();
+      const roles = await this.userService.getUserRoles();
       this.roles = roles;
       const observables: { [key: string]: Observable<boolean> } = {};
       this.opcionesPermisos.forEach(opcion => {
@@ -128,9 +130,13 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
       const resultados = await firstValueFrom(forkJoin(observables));
       this.permisos = resultados;
       console.log("Permisos cargados:", this.permisos);
-    });
-    this.loadSelects();
-    this.buildForms();
+      await this.loadSelects();
+      this.buildForms();
+    } catch (err) {
+      this.popUpManager.showErrorAlert(this.translate.instant("ERROR.persiste_error_comunique_OAS"));
+    } finally {
+      this.popUpManager.closeLoading();
+    }
   }
 
   ngAfterViewInit() {
@@ -384,25 +390,25 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
       return;
     }
 
-    // Si pasa la verificación, proceder a cambiar el estado a ENV
-    let putPlan = _cloneDeep(consolidado);
-    putPlan.estado_consolidado_id = estadoEnv._id;
-    this.planTrabajoDocenteService
-      .put("consolidado_docente/" + putPlan._id, putPlan)
-      .subscribe(
-        (resp) => {
-          this.popUpManager.showSuccessAlert(
-            this.translate.instant("ptd.actualizar_consolidado_ok")
-          );
-          this.listarConsolidados();
-        },
-        (err) => {
-          console.warn(err);
-          this.popUpManager.showErrorAlert(
-            this.translate.instant("ptd.fallo_actualizar_consolidado")
-          );
-        }
+    try {
+      // Si pasa la verificación, proceder a cambiar el estado a ENV
+      const putPlan = _cloneDeep(consolidado);
+      putPlan.estado_consolidado_id = estadoEnv._id;
+      await firstValueFrom(
+        this.planTrabajoDocenteService.put("consolidado_docente/" + putPlan._id, putPlan)
       );
+      this.popUpManager.closeLoading();
+      this.popUpManager.showSuccessAlert(
+        this.translate.instant("ptd.actualizar_consolidado_ok")
+      );
+      await this.listarConsolidados();
+    } catch (err) {
+      this.popUpManager.closeLoading();
+      console.warn(err);
+      this.popUpManager.showErrorAlert(
+        this.translate.instant("ptd.fallo_actualizar_consolidado")
+      );
+    }
   }
 
   loadPeriodo(): Promise<Periodo[]> {
@@ -464,15 +470,17 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
 
   async loadSelects() {
     try {
-      await Promise.all([
+      let promesas: Promise<void>[] = [];
+      promesas.push(
         this.loadPeriodo().then((periodos) => {
           this.periodos.opciones = periodos;
           this._todosLosPeriodos = [...periodos];
         }),
         this.cargarEstadosConsolidado().then((estadosConsolidado) => {
           this.estadosConsolidado.opciones = estadosConsolidado;
-        }),
-      ]);
+        })
+      );
+      await Promise.all(promesas);
     } catch (error) {
       console.warn(error);
       this.popUpManager.showPopUpGeneric(
@@ -511,7 +519,7 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
     }
   }
 
-  listarConsolidados() {
+  async listarConsolidados() {
     if (!this.permisos['ver_consolidados_coordinacion']){
       this.popUpManager.showErrorAlert(
         this.translate.instant('GLOBAL.acceso_denegado')
@@ -528,82 +536,81 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
       if (this.proyectos.select && !this.roles.includes(ROLES.DOCENTE)) {
         proyecto = ",proyecto_academico_id:" + this.proyectos.select.Id;
       }
-      this.planTrabajoDocenteService
-        .get(
-          `consolidado_docente?query=activo:true,periodo_id:${this.periodos.select.Id}${proyecto}&limit=0`
-        )
-        .subscribe(
-          (resp) => {
-            let rawlistarConsolidados = <any[]>resp.Data;
-            const idEstadosFiltro = this.estadosConsolidado.opciones
-              .filter((estado) =>
-                ["DEF", "ENV", "APR", "N_APR"].includes(
-                  estado.codigo_abreviacion
-                )
-              )
-              .map((estado) => estado._id);
-            rawlistarConsolidados = rawlistarConsolidados.filter(
-              (consolidado) =>
-                idEstadosFiltro.includes(consolidado.estado_consolidado_id)
-            );
-            let formatedData: any[] = [];
-            rawlistarConsolidados.forEach((consolidado) => {
-              const estadoConsolidado = this.estadosConsolidado.opciones.find(
-                (estado) => estado._id == consolidado.estado_consolidado_id
-              );
-              const proyecto = this.proyectos.opciones.find(
-                (proyecto) => proyecto.Id == consolidado.proyecto_academico_id
-              );
-              const periodo = this.periodos.opciones.find(
-                (periodo) => periodo.Id == consolidado.periodo_id
-              );
-              const canViewGestion =
-                this.permisos['ver_gestion_consolidado'] ||
-                this.permisos['editar_gestion_consolidado'];
-              let opcionGestion = "ver";
-              if (
-                estadoConsolidado &&
-                (estadoConsolidado.codigo_abreviacion == "DEF" ||
-                  estadoConsolidado.codigo_abreviacion == "N_APR") &&
-                this.permisos['editar_gestion_consolidado']
-              ) {
-                opcionGestion = "editar";
-              }
-              formatedData.push({
-                proyecto_curricular: proyecto ? proyecto.Nombre : "",
-                codigo: proyecto ? proyecto.Codigo : "",
-                fecha_radicado: this.formatoFecha(consolidado.fecha_creacion),
-                periodo_academico: periodo ? periodo.Nombre : "",
-                revision_decanatura: {
-                  value: undefined,
-                  type: "ver",
-                  disabled: false,
-                },
-                gestion: {
-                  value: undefined,
-                  type: opcionGestion,
-                  disabled: !canViewGestion,
-                },
-                estado: estadoConsolidado
-                  ? estadoConsolidado.nombre
-                  : consolidado.estado_consolidado_id,
-                enviar: {
-                  value: undefined,
-                  type: "enviar",
-                  disabled:
-                    !this.permisos['enviar_coordinador_consolidado'] ||
-                    estadoConsolidado.codigo_abreviacion != "DEF",
-                },
-                ConsolidadoJson: consolidado,
-              });
-            });
-            this.dataSource = this.configurarDataSource(formatedData);
-          },
-          (err) => {
-            console.warn(err);
-            this.dataSource = this.configurarDataSource();
-          }
+      try {
+        const resp: any = await firstValueFrom(
+          this.planTrabajoDocenteService.get(
+            `consolidado_docente?query=activo:true,periodo_id:${this.periodos.select.Id}${proyecto}&limit=0`
+          )
         );
+        let rawlistarConsolidados = <any[]>resp.Data;
+        const idEstadosFiltro = this.estadosConsolidado.opciones
+          .filter((estado) =>
+            ["DEF", "ENV", "APR", "N_APR"].includes(
+              estado.codigo_abreviacion
+            )
+          )
+          .map((estado) => estado._id);
+        rawlistarConsolidados = rawlistarConsolidados.filter(
+          (consolidado) =>
+            idEstadosFiltro.includes(consolidado.estado_consolidado_id)
+        );
+        let formatedData: any[] = [];
+        rawlistarConsolidados.forEach((consolidado) => {
+          const estadoConsolidado = this.estadosConsolidado.opciones.find(
+            (estado) => estado._id == consolidado.estado_consolidado_id
+          );
+          const proyecto = this.proyectos.opciones.find(
+            (proyecto) => proyecto.Id == consolidado.proyecto_academico_id
+          );
+          const periodo = this.periodos.opciones.find(
+            (periodo) => periodo.Id == consolidado.periodo_id
+          );
+          const canViewGestion =
+            this.permisos['ver_gestion_consolidado'] ||
+            this.permisos['editar_gestion_consolidado'];
+          let opcionGestion = "ver";
+          if (
+            estadoConsolidado &&
+            (estadoConsolidado.codigo_abreviacion == "DEF" ||
+              estadoConsolidado.codigo_abreviacion == "N_APR") &&
+            this.permisos['editar_gestion_consolidado']
+          ) {
+            opcionGestion = "editar";
+          }
+          formatedData.push({
+            proyecto_curricular: proyecto ? proyecto.Nombre : "",
+            codigo: proyecto ? proyecto.Codigo : "",
+            fecha_radicado: this.formatoFecha(consolidado.fecha_creacion),
+            periodo_academico: periodo ? periodo.Nombre : "",
+            revision_decanatura: {
+              value: undefined,
+              type: "ver",
+              disabled: false,
+            },
+            gestion: {
+              value: undefined,
+              type: opcionGestion,
+              disabled: !canViewGestion,
+            },
+            estado: estadoConsolidado
+              ? estadoConsolidado.nombre
+              : consolidado.estado_consolidado_id,
+            enviar: {
+              value: undefined,
+              type: "enviar",
+              disabled:
+                !this.permisos['enviar_coordinador_consolidado'] ||
+                estadoConsolidado.codigo_abreviacion != "DEF",
+            },
+            ConsolidadoJson: consolidado,
+          });
+        });
+        this.dataSource = new MatTableDataSource(formatedData);
+      } catch (err) {
+        console.warn(err);
+        this.dataSource = new MatTableDataSource();
+        throw err;
+      }
     }
   }
 
