@@ -4,8 +4,17 @@
       <h2>{{ "ptd.preasignar_ptd" | translate }}</h2>
     </mat-card-title>
   </mat-card-header>
+  <!-- Botones para cambiar vista (solo si tiene ambos roles) -->
+  <mat-toolbar *ngIf="permisos['tabla_docente'] && permisos['tabla_coordinador']" style="display: flex; gap: 1em; background-color: transparent; box-shadow: none;">
+    <button mat-raised-button [color]="vistaActiva === 'docente' ? 'primary' : ''" (click)="cambiarVista('docente')">
+      {{ "ptd.vista_docente" | translate }}
+    </button>
+    <button mat-raised-button [color]="vistaActiva === 'coordinador' ? 'primary' : ''" (click)="cambiarVista('coordinador')">
+      {{ "ptd.vista_coordinador" | translate }}
+    </button>
+  </mat-toolbar>
   <!-- Vista de tabla lista docentes -->
-  <mat-card-content *ngIf="permisos['tabla_docente']">
+  <mat-card-content *ngIf="vistaActiva === 'docente' && permisos['tabla_docente']">
     <h3 class="margin-y">{{ "ptd.preasignacion" | translate }}</h3>
 
     <div class="row">
@@ -63,6 +72,7 @@
         mat-flat-button
         color="accent"
         (click)="enviarAprobacion()"
+        [disabled]="!tienePreasignacionesSeleccionadas()"
       >
         <mat-icon>send</mat-icon>
         {{ "GLOBAL.enviar_aprobacion" | translate }}
@@ -74,7 +84,7 @@
         <mat-label>{{ "GLOBAL.filtrar" | translate }}</mat-label>
         <input matInput (keyup)="applyFilter($event)" #input />
       </mat-form-field>
-      <mat-table mat-table [dataSource]="dataSource" matSort>
+      <mat-table mat-table [dataSource]="dataSource" matSort #docenteSort="matSort">
         <ng-container matColumnDef="espacio_academico">
           <mat-header-cell *matHeaderCellDef mat-sort-header>
             <b>{{ "practicas_academicas.espacio_academico" | translate }}</b>
@@ -115,6 +125,7 @@
             <action-check
               [rowData]="row"
               [value]="row.aprobacion_docente"
+              (checkboxVal)="actualizarAprobacion($event, 'aprobacion_docente')"
             ></action-check>
           </mat-cell>
         </ng-container>
@@ -126,6 +137,7 @@
             <action-check
               [rowData]="row"
               [value]="row.aprobacion_proyecto"
+              (checkboxVal)="actualizarAprobacion($event, 'aprobacion_proyecto')"
             ></action-check>
           </mat-cell>
         </ng-container>
@@ -154,14 +166,18 @@
           *matRowDef="let row; columns: displayedColumns_docente"
         ></mat-row>
       </mat-table>
-      <mat-paginator
+      <mat-paginator #paginatorDocente
         [pageSizeOptions]="[5, 10, 25, 100]"
         aria-label="Select page of users"
       ></mat-paginator>
     </div>
+    <div *ngIf="dataSource.data.length === 0 && hasAttemptedToLoad" class="margin-y alert info">
+      <mat-icon class="icon">sentiment_very_dissatisfied</mat-icon>
+      {{ "ptd.sin_preasignaciones_de_carga_academica_por_periodo" | translate }}
+    </div>
   </mat-card-content>
   <!-- Vista de tabla lista Coordinador -->
-  <mat-card-content *ngIf="permisos['tabla_coordinador']">
+  <mat-card-content *ngIf="vistaActiva === 'coordinador' && permisos['tabla_coordinador']">
     <h3 class="margin-y">{{ "ptd.preasignacion" | translate }}</h3>
 
     <div class="row">
@@ -232,7 +248,7 @@
         <mat-label>{{ "GLOBAL.filtrar" | translate }}</mat-label>
         <input matInput (keyup)="applyFilter($event)" #input />
       </mat-form-field>
-      <mat-table mat-table [dataSource]="dataSource" matSort>
+      <mat-table mat-table [dataSource]="dataSource" matSort #coordSort="matSort">
         <ng-container matColumnDef="docente">
           <mat-header-cell *matHeaderCellDef mat-sort-header>
             <b>{{ "notas.docente" | translate }}</b>
@@ -279,6 +295,7 @@
             <action-check
               [rowData]="row"
               [value]="row.aprobacion_docente"
+              (checkboxVal)="actualizarAprobacion($event, 'aprobacion_docente')"
             ></action-check>
           </mat-cell>
         </ng-container>
@@ -290,6 +307,7 @@
             <action-check
               [rowData]="row"
               [value]="row.aprobacion_proyecto"
+              (checkboxVal)="actualizarAprobacion($event, 'aprobacion_proyecto')"
             ></action-check>
           </mat-cell>
         </ng-container>
@@ -342,12 +360,12 @@
           *matRowDef="let row; columns: displayedColumns_coord"
         ></mat-row>
       </mat-table>
-      <mat-paginator
+      <mat-paginator #paginatorCoord
         [pageSizeOptions]="[5, 10, 25, 100]"
         aria-label="Select page of users"
       ></mat-paginator>
     </div>
-    <div *ngIf="dataSource.data.length === 0" class="margin-y alert info">
+    <div *ngIf="dataSource.data.length === 0 && hasAttemptedToLoad" class="margin-y alert info">
       <mat-icon class="icon">sentiment_very_dissatisfied</mat-icon>
       {{ "ptd.sin_preasignaciones_de_carga_academica_por_periodo" | translate }}
     </div>

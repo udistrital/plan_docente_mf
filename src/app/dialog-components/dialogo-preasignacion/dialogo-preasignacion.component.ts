@@ -34,7 +34,6 @@ import { checkContent, checkResponse } from "src/app/utils/verify-response";
 import { EspaciosAcademicos } from "src/app/models/espacios-academicos/espacios-academicos";
 import { MODALS } from "src/app/models/diccionario";
 import { DialogoCrearEspacioGrupoComponent } from "../dialogo-crear-espacio-grupo/dialogo-crear-espacio-grupo.component";
-import { AcademicaJbpmService } from "src/app/services/academica-jbpm.service";
 import { UserService } from "src/app/services/user.service";
 import { ROLES } from "src/app/models/diccionario";
 
@@ -91,7 +90,6 @@ export class DialogoPreAsignacionPtdComponent implements OnInit {
     private sgaPlanTrabajoDocenteMidService: SgaPlanTrabajoDocenteMidService,
     private parametrosService: ParametrosService,
     private tercerosService: TercerosService,
-    private academicaJbpmService: AcademicaJbpmService,
     private userService: UserService,
     private builder: FormBuilder,
     private dialog: MatDialog,
@@ -823,7 +821,7 @@ export class DialogoPreAsignacionPtdComponent implements OnInit {
                         .trim()
                         .toUpperCase() === nombreGrupo
                   );
-                  if (perteneceAlCoordinador || this.roles.includes(ROLES.DOCENTE)) {
+                  if (perteneceAlCoordinador) {
                     // Evitar duplicados en opciones
                     const yaExiste = this.opcionesProyectos.some(
                       (opcion) =>
@@ -864,15 +862,17 @@ export class DialogoPreAsignacionPtdComponent implements OnInit {
     const nombreProyecto = String(proyectoSeleccionado)
       .trim()
       .toUpperCase();
-    if (this.roles.includes(ROLES.DOCENTE)) {
-      this.opcionesGrupos = this.opcionesGruposTodas;
-    } else {
+    // Filtrar solo si hay proyectos de coordinador asignados
+    if (this.proyectosCoordinador.length > 0) {
       this.opcionesGrupos = this.opcionesGruposTodas.filter(
         (grupo) =>
           String(grupo.ProyectoAcademico)
             .trim()
             .toUpperCase() === nombreProyecto
       );
+    } else {
+      // Si no hay proyectos de coordinador, mostrar todos (usuario solo tiene rol docente)
+      this.opcionesGrupos = this.opcionesGruposTodas;
     }
     this.preasignacionForm.get("grupo")?.setValue(null);
     if (this.opcionesGrupos.length > 0) {
@@ -993,28 +993,6 @@ export class DialogoPreAsignacionPtdComponent implements OnInit {
       if (grupoEspacio && grupoEspacio.creado) {
         this.loadProyectos();
       }
-    });
-  }
-  
-  obtenerProyectosCoordinador(): Promise<any[]> {
-    return new Promise((resolve, reject) => {
-      const documentoCoordinador = this.obtenerDocumentoCoordinador();
-      if (!documentoCoordinador) {
-        reject(new Error("No fue posible obtener el documento del coordinador"));
-        return;
-      }
-      this.academicaJbpmService.get(`coordinador_usuario/${documentoCoordinador}`).subscribe({
-        next: (resp: any) => {
-          if (Array.isArray(resp.coordinadores.coordinador)) {
-            resolve(resp.coordinadores.coordinador);
-          } else {
-            reject(new Error("No se encontraron proyectos para el coordinador"));
-          }
-        },
-        error: (err) => {
-          reject(err);
-        },
-      });
     });
   }
 }

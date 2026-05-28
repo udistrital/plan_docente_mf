@@ -114,7 +114,6 @@ export class HorarioCargaLectivaComponent implements OnInit, OnChanges {
   ubicacionForm: FormGroup;
   ubicacionActive: boolean = false;
   editandoAsignacion: CardDetalleCarga;
-  aprobacion: any = undefined;
   EspaciosProyecto: any = undefined;
   manageByTime: boolean = false;
   puedeEditarPTD: boolean = false;
@@ -1073,12 +1072,32 @@ export class HorarioCargaLectivaComponent implements OnInit, OnChanges {
   }
 
   obtenerActividadesNoLectivas() {
-    return this.listaCargaLectiva.filter(
+    const actividadesFiltradas = this.listaCargaLectiva.filter(
       (carga: CardDetalleCarga) =>
         carga.tipo === this.tipo.actividades &&
         this.isInsideGrid(carga) &&
         !carga.modular
     );
+
+    // Agrupar por nombre de actividad y sumar horas
+    const actividadesAgrupadas = new Map<string, any>();
+
+    actividadesFiltradas.forEach((actividad: CardDetalleCarga) => {
+      const nombre = String(actividad.nombre || '').trim();
+      if (nombre) {
+        if (actividadesAgrupadas.has(nombre)) {
+          const existente = actividadesAgrupadas.get(nombre);
+          existente.horas += actividad.horas;
+        } else {
+          actividadesAgrupadas.set(nombre, {
+            nombre: nombre,
+            horas: actividad.horas
+          });
+        }
+      }
+    });
+
+    return Array.from(actividadesAgrupadas.values());
   }
 
   async guardar_ptd() {
@@ -1172,16 +1191,7 @@ export class HorarioCargaLectivaComponent implements OnInit, OnChanges {
       }
     }
 
-    let estado_plan_is = "";
-    if (this.isCoordinador) {
-      if (this.aprobacion) {
-        estado_plan_is = this.aprobacion._id;
-      } else {
-        estado_plan_is = "Sin definir";
-      }
-    } else {
-      estado_plan_is = this.Data.estado_plan[this.seleccion];
-    }
+    const estado_plan_is = this.Data.estado_plan[this.seleccion];
 
     let plan_docente = {
       id: this.Data.plan_docente[this.seleccion],

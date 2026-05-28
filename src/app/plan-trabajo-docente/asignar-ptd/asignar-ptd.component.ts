@@ -10,7 +10,6 @@ import { PlanTrabajoDocenteService } from "src/app/services/plan-trabajo-docente
 import { SgaPlanTrabajoDocenteMidService } from "src/app/services/sga-plan-trabajo-docente-mid.service";
 import { UserService } from "src/app/services/user.service";
 import { checkContent, checkResponse } from "src/app/utils/verify-response";
-import { intersection as _intersection, head as _head } from "lodash-es";
 import { MatTableDataSource } from "@angular/material/table";
 import { MatPaginator } from "@angular/material/paginator";
 import { MatSort } from "@angular/material/sort";
@@ -24,7 +23,6 @@ import { firstValueFrom } from "rxjs/internal/firstValueFrom";
 import { Observable } from "rxjs/internal/Observable";
 import { PermisosUtils } from "src/app/utils/role-permissions";
 import { AcademicaJbpmService } from "src/app/services/academica-jbpm.service";
-import { RouterEvent } from "@angular/router";
 
 @Component({
   selector: "app-asignar-ptd",
@@ -37,6 +35,7 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
   readonly MODALS = MODALS;
   readonly ACTIONS = ACTIONS;
   vista: Symbol;
+  vistaActiva: 'docente' | 'coordinador' = 'docente';
 
   roles: string[] = [];
   canEdit: Symbol = ACTIONS.VIEW;
@@ -63,7 +62,6 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
   enRangoCalendario: boolean = false;
 
   estadosPlan: EstadoPlan[] = [];
-  estadosAprobar: EstadoPlan[] = [];
 
   dataSource: MatTableDataSource<any>;
   displayedColumns: string[] = [
@@ -89,6 +87,7 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
   private errorCargaAutomaticaMostrado = false;
   private proyectosCoordinador: string[] = [];
   private preasignacionesPeriodo: any[] = [];
+  hasAttemptedToLoad = false;
 
   constructor(
     private translate: TranslateService,
@@ -123,11 +122,17 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
           );
 
       });
-      // Espera todos los permisos
-      this.permisos = await firstValueFrom(
-        forkJoin(observables)
-      );
-      // Flujo dependiente
+      const resultados = await firstValueFrom(forkJoin(observables));
+      this.permisos = resultados;
+      console.log("Permisos cargados:", this.permisos);
+
+      if (!this.permisos['asignaciones_docente'] && this.permisos['asignaciones_coordinador']) {
+        this.vistaActiva = 'coordinador';
+      } else {
+        this.vistaActiva = 'docente';
+      }
+      
+      // Cargar proyectos del coordinador si tiene permiso
       if (this.permisos['enviar_coordinador']) {
         this.proyectosCoordinador =
           await this.obtenerProyectosCoordinador();
@@ -276,8 +281,29 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
   }
 
   ngAfterViewInit() {
-    this.dataSource.paginator = this.paginator;
-    this.dataSource.sort = this.sort;
+    this.attachPaginatorAndSort();
+  }
+
+  private attachPaginatorAndSort() {
+    setTimeout(() => {
+      if (this.paginator && this.sort) {
+        this.dataSource.paginator = this.paginator;
+        this.dataSource.sort = this.sort;
+        this.dataSource.paginator.firstPage();
+      }
+    }, 100);
+  }
+
+  cambiarVista(vista: 'docente' | 'coordinador') {
+    this.vistaActiva = vista;
+    this.dataSource.filter = '';
+    this.dataSource.data = [];
+    this.preasignacionesPeriodo = [];
+    this.hasAttemptedToLoad = false;
+
+    if (this.periodo?.Id) {
+      this.loadAsignaciones();
+    }
   }
 
   applyFilter(event: Event) {
@@ -326,6 +352,20 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
       this.checknloadRelatedPTD(
         this.detalleAsignacion.planes_relacionados_query
       );
+      this.vista = VIEWS.FORM;
+          if (this.permisos['ver_gestion']) {
+            const modales = [];
+            if (this.canEdit == ACTIONS.VIEW) {
+              modales.push(this.translate.instant("ptd.info_modo_solo_ver"));
+            }
+            modales.push(
+              this.translate.instant("ptd.aviso_informativo_docente_p1") +
+              ".<br><br>" +
+              this.translate.instant("ptd.aviso_informativo_docente_p2") +
+              "."
+            );
+            //this.popUpManager.showManyPopUp(this.translate.instant('notas.docente'), modales, MODALS.INFO)
+          }
       if (
         this.permisos['enviar_coordinador'] &&
         event.rowData.estado === "Enviado a coordinación"
@@ -361,22 +401,23 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
   accionEnviar(event: any) {
     const canSendCoordinator = this.permisos['enviar_coordinador'];
     const canSendDocente = this.permisos['enviar_docente'];
+    const coordinador = this.esCoordinadorAsignacion;
 
-    if (!canSendCoordinator && !canSendDocente) {
+    if ((coordinador && !canSendCoordinator) || (!coordinador && !canSendDocente)) {
       this.popUpManager.showErrorAlert(
         this.translate.instant('GLOBAL.acceso_denegado')
       );
       return;
     }
 
-    if (canSendCoordinator && !this.tienePendienteEnvioCoordinacion(event?.rowData)) {
+    if (coordinador && !this.tienePendienteEnvioCoordinacion(event?.rowData)) {
       this.popUpManager.showErrorToast(
         this.translate.instant("ptd.no_hay_pendientes_aprobacion_coordinacion")
       );
       return;
     }
 
-    const title = canSendCoordinator
+    const title = coordinador
       ? this.translate.instant("ptd.enviar_a_docente")
       : this.translate.instant("ptd.mensaje_enviar_a_coordinacion");
     this.popUpManager
@@ -391,7 +432,7 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
           this.popUpManager.showLoading();
           try {
             await this.enviarSegunRol(
-              canSendCoordinator,
+              coordinador,
               event.rowData.plan_docente_id,
               event.rowData
             );
@@ -495,90 +536,152 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
     }
   }
 
-  async loadAsignaciones(): Promise<void> {
-    if (this.permisos['asignaciones_coordinador']) {
+  loadAsignaciones() {
+    this.dataSource.filter = '';
+
+    if (this.vistaActiva === 'coordinador') {
+      if (!this.permisos['asignaciones_coordinador']) {
+        this.dataSource = new MatTableDataSource();
+        this.popUpManager.showErrorAlert(
+          this.translate.instant('GLOBAL.acceso_denegado')
+        );
+        this.attachPaginatorAndSort();
+        return;
+      }
+
       let url = "asignacion?vigencia=" + this.periodo.Id;
       if (this.proyecto && this.proyecto.Id && !this.roles.includes(ROLES.DOCENTE)) {
         url += "&proyecto=" + this.proyecto.Id;
       }
+      this.sgaPlanTrabajoDocenteMidService
+        .get(url)
+        .subscribe({
+          next: async (resp: RespFormat) => {
+            if (checkResponse(resp) && checkContent(resp)) {
+              const preasignaciones = await this.cargarPreasignacionesPeriodo();
+              this.preasignacionesPeriodo = preasignaciones;
+              let data = (resp.Data || []).map((row: any) => {
+                const semaforo = this.getSemaforoAsignacion(row, preasignaciones);
+                const enviar = this.construirAccionEnviar(row, preasignaciones);
+                const estado = row?.estado
+                  ? row.estado.toString().toLowerCase()
+                  : "";
+                const isNoAprobado = estado.indexOf("no aprobado") > -1;
+                if (this.permisos['ver_gestion'] && (isNoAprobado || row.estado === "Enviado a docente") && row.gestion) {
+                  return { ...row, gestion: { ...row.gestion, type: "ver" }, semaforo, enviar };
+                }
 
-      const resp: RespFormat = await firstValueFrom(
-        this.sgaPlanTrabajoDocenteMidService.get(url)
-      );
+                return {
+                  ...row,
+                  semaforo,
+                  enviar,
+                };
+              });
 
-      if (checkResponse(resp) && checkContent(resp)) {
-        const preasignaciones = await this.cargarPreasignacionesPeriodo();
-        this.preasignacionesPeriodo = preasignaciones;
-        const data = (resp.Data || []).map((row: any) => {
-          const semaforo = this.getSemaforoAsignacion(row, preasignaciones);
-          const enviar = this.construirAccionEnviar(row, preasignaciones);
-          const estado = row?.estado ? row.estado.toString().toLowerCase() : "";
-          const isNoAprobado = estado.indexOf("no aprobado") > -1;
-          if (this.permisos['ver_gestion'] && (isNoAprobado || row.estado === "Enviado a docente") && row.gestion) {
-            return { ...row, gestion: { ...row.gestion, type: "ver" }, semaforo, enviar };
-          }
-
-          return {
-            ...row,
-            semaforo,
-            enviar,
-          };
+              this.dataSource = new MatTableDataSource(data);
+            } else {
+              this.dataSource = new MatTableDataSource();
+              this.popUpManager.showErrorAlert(
+                this.translate.instant("ptd.error_no_found_asignaciones")
+              );
+            }
+            this.hasAttemptedToLoad = true;
+            this.attachPaginatorAndSort();
+          },
+          error: (err) => {
+            this.dataSource = new MatTableDataSource();
+            this.popUpManager.showErrorAlert(
+              this.translate.instant("ptd.error_no_found_asignaciones")
+            );
+            this.hasAttemptedToLoad = true;
+            this.attachPaginatorAndSort();
+          },
         });
-
-        this.dataSource = new MatTableDataSource(data);
+    } else if (this.vistaActiva === 'docente') {
+      if (!this.permisos['asignaciones_docente']) {
+        this.dataSource = new MatTableDataSource();
+        this.popUpManager.showErrorAlert(
+          this.translate.instant('GLOBAL.acceso_denegado')
+        );
+        this.attachPaginatorAndSort();
         return;
       }
 
-      this.dataSource = new MatTableDataSource();
-      throw new Error(this.translate.instant("ptd.error_no_found_asignaciones"));
-    } else if (this.permisos['asignaciones_docente']) {
-      const id_tercero = await this.userService.getPersonaId();
-      let url = "asignacion/docente?docente=" + id_tercero + "&vigencia=" + this.periodo.Id;
-      if (this.proyecto && this.proyecto.Id && !this.roles.includes(ROLES.DOCENTE)) {
-        url += "&proyecto=" + this.proyecto.Id;
-      }
-
-      const resp: RespFormat = await firstValueFrom(
-        this.sgaPlanTrabajoDocenteMidService.get(url)
-      );
-
-      if (checkResponse(resp) && checkContent(resp)) {
-        const data = (resp.Data || []).map((row: any) => {
-          const semaforo = this.getSemaforoAsignacion(row);
-          const enviar = this.construirAccionEnviar(row);
-          const estado = row?.estado ? row.estado.toString().toLowerCase() : "";
-          const isNoAprobado = estado.indexOf("no aprobado") > -1;
-
-          if (this.permisos['ver_gestion'] && isNoAprobado && row.gestion) {
-            return {
-              ...row,
-              gestion: { ...row.gestion, type: "ver" },
-              semaforo,
-              enviar,
-            };
+      this.userService
+        .getPersonaId()
+        .then((id_tercero) => {
+          let url = "asignacion/docente?docente=" + id_tercero + "&vigencia=" + this.periodo.Id;
+          if (this.proyecto && this.proyecto.Id && !this.roles.includes(ROLES.DOCENTE)) {
+            url += "&proyecto=" + this.proyecto.Id;
           }
+          this.sgaPlanTrabajoDocenteMidService
+            .get(url)
+            .subscribe({
+              next: (resp: RespFormat) => {
+                if (checkResponse(resp) && checkContent(resp)) {
+                  let data = (resp.Data || []).map((row: any) => {
+                    const semaforo = this.getSemaforoAsignacion(row);
+                    const enviar = this.construirAccionEnviar(row);
+                    const estado = row?.estado
+                      ? row.estado.toString().toLowerCase()
+                      : "";
+                    const isNoAprobado = estado.indexOf("no aprobado") > -1;
 
-          return {
-            ...row,
-            semaforo,
-            enviar,
-          };
+                    if (this.permisos['ver_gestion'] && isNoAprobado && row.gestion) {
+                      return {
+                        ...row,
+                        gestion: { ...row.gestion, type: "ver" },
+                        semaforo,
+                        enviar,
+                      };
+                    }
+
+                    return {
+                      ...row,
+                      semaforo,
+                      enviar,
+                    };
+                  });
+
+                  this.dataSource = new MatTableDataSource(data);
+                } else {
+                  this.dataSource = new MatTableDataSource();
+                  this.popUpManager.showErrorAlert(
+                    this.translate.instant("ptd.error_no_found_asignaciones")
+                  );
+                }
+                this.hasAttemptedToLoad = true;
+                this.attachPaginatorAndSort();
+              },
+              error: (err) => {
+                this.dataSource = new MatTableDataSource();
+                this.popUpManager.showErrorAlert(
+                  this.translate.instant("ptd.error_no_found_asignaciones")
+                );
+                this.hasAttemptedToLoad = true;
+                this.attachPaginatorAndSort();
+              },
+            });
+        })
+        .catch((err) => {
+          this.dataSource = new MatTableDataSource();
+          this.popUpManager.showErrorToast(
+            this.translate.instant("GLOBAL.error_no_found_tercero_id")
+          );
+          this.hasAttemptedToLoad = true;
+          this.attachPaginatorAndSort();
         });
-
-        this.dataSource = new MatTableDataSource(data);
-        return;
-      }
-
+    } else {
       this.dataSource = new MatTableDataSource();
-      throw new Error(this.translate.instant("ptd.error_no_found_asignaciones"));
+      this.popUpManager.showErrorAlert(
+        this.translate.instant('GLOBAL.acceso_denegado')
+      );
+      this.attachPaginatorAndSort();
     }
-
-    this.dataSource = new MatTableDataSource();
-    throw new Error(this.translate.instant('GLOBAL.acceso_denegado'));
   }
 
   get esCoordinadorAsignacion(): boolean {
-    return !!this.permisos['enviar_coordinador'];
+    return this.vistaActiva === 'coordinador' && !!this.permisos['asignaciones_coordinador'];
   }
 
   getSemaforoAsignacion(row: any, preasignaciones: any[] = []): { color: string; tooltip: string; icon: string } {
@@ -635,7 +738,7 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
     accion.type = accion.type || "enviar";
 
     if (this.esCoordinadorAsignacion) {
-      accion.disabled = !this.tienePendienteEnvioCoordinacion(row, preasignaciones);
+      accion.disabled = !this.permisos['enviar_coordinador'] || !this.tienePendienteEnvioCoordinacion(row, preasignaciones);
     } else if (typeof accion.disabled !== "boolean") {
       accion.disabled = !this.permisos['enviar_docente'];
     }
@@ -698,6 +801,9 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
     this.periodo = new Periodo({});
     this.periodosFiltrados = [];
     this.dataSource = new MatTableDataSource();
+    this.preasignacionesPeriodo = [];
+    this.dataSource.filter = '';
+    this.hasAttemptedToLoad = false;
     if (this.proyecto) {
       this.filtrarPeriodosPorCalendario();
     }
@@ -706,10 +812,14 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
   async selectPeriodo(periodo: MatSelectChange) {
     this.periodo = periodo.value;
     this.dataSource = new MatTableDataSource();
+    this.preasignacionesPeriodo = [];
+    this.dataSource.filter = '';
+    this.hasAttemptedToLoad = false;
     if (this.periodo.Id) {
       this.cargarPeriodosAnteriores(this.periodo);
       this.verificarRangoFechas();
       if (!this.enRangoCalendario) {
+        this.hasAttemptedToLoad = true;
         this.popUpManager.showErrorToast("El periodo seleccionado no se encuentra en el rango de fechas.");
         return;
       }
@@ -952,6 +1062,13 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
       }
 
       const cargasNuevas: any[] = [];
+      const espaciosObjetivoIds = Array.from(
+        new Set(
+          espaciosParaProcesar
+            .map((espacio: any) => String(espacio?.id || espacio?._id || "").trim())
+            .filter((id: string) => !!id)
+        )
+      );
 
       for (const espacio of espaciosParaProcesar) {
         const espacioAcademicoId = String(espacio?.id || espacio?._id || "").trim();
@@ -1034,8 +1151,26 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
         });
       }
 
+      const espaciosAprobadosIds = Array.from(
+        new Set(
+          [
+            ...cargaActual
+              .map((c: any) => String(c?.espacio_academico_id || "").trim())
+              .filter((id: string) => !!id && id !== "NA"),
+            ...cargasNuevas
+              .map((c: any) => String(c?.espacio_academico_id || "").trim())
+              .filter((id: string) => !!id && id !== "NA"),
+          ].filter((id: string) => espaciosObjetivoIds.includes(id))
+        )
+      );
+
       if (!cargasNuevas.length) {
-        return true;
+        const preasignacionesActualizadas = await this.marcarPreasignacionesComoAprobadasPorCoordinacion(
+          rowData,
+          espaciosAprobadosIds
+        );
+
+        return preasignacionesActualizadas;
       }
 
       const materiasConCruce = this.obtenerMateriasConCruceHorario(
@@ -1065,10 +1200,6 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
 
       const estadoActual =
         planDocenteActual?.estado_plan_id || dataPlan?.estado_plan?.[seleccion] || "Sin definir";
-
-      const espaciosAprobadosIds = cargasNuevas
-        .map((c) => String(c?.espacio_academico_id || "").trim())
-        .filter((id) => !!id && id !== "NA");
 
       await firstValueFrom(
         this.sgaPlanTrabajoDocenteMidService.put("plan/", {

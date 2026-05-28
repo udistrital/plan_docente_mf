@@ -589,28 +589,11 @@
       [disabled]="isDocente || !puedeEditarPTD"
     ></textarea>
   </mat-form-field>
-  <ng-container *ngIf="Data.aprobacion" class="margin-y">
-    <h4>
-      {{ "ptd.aprobacion_plan_coordinacion" | translate }}
-    </h4>
-    <mat-form-field class="form-field">
-      <mat-label
-        >* {{ "ptd.aprobacion_plan_coordinacion" | translate }}:</mat-label
-      >
-      <mat-select [(ngModel)]="aprobacion">
-        <mat-option>--{{ "GLOBAL.seleccionar" | translate }}--</mat-option>
-        <mat-option *ngFor="let item of Data.aprobacion" [value]="item">
-          {{ item.nombre }}
-        </mat-option>
-      </mat-select>
-    </mat-form-field>
-  </ng-container>
   <div *ngIf="puedeEditarPTD" style="display: flex; justify-content: center">
     <button
       mat-flat-button
       color="accent"
       (click)="guardar_ptd()"
-      [disabled]="Data.aprobacion && !aprobacion"
     >
       <mat-icon>save</mat-icon>
       {{ "ptd.guardar_ptd" | translate }}

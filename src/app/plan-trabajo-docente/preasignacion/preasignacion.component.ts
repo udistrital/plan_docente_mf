@@ -1,4 +1,4 @@
-import { AfterViewInit, Component, OnInit, ViewChild } from "@angular/core";
+import { AfterViewInit, Component, OnInit, ViewChild, ChangeDetectorRef } from "@angular/core";
 import { MatPaginator } from "@angular/material/paginator";
 import { MatSort } from "@angular/material/sort";
 import { MatTableDataSource } from "@angular/material/table";
@@ -14,7 +14,6 @@ import { SgaPlanTrabajoDocenteMidService } from "src/app/services/sga-plan-traba
 import { MatDialog, MatDialogConfig } from "@angular/material/dialog";
 import { DialogoPreAsignacionPtdComponent } from "src/app/dialog-components/dialogo-preasignacion/dialogo-preasignacion.component";
 import { PlanTrabajoDocenteService } from "src/app/services/plan-trabajo-docente.service";
-import { ProyectoAcademicoService } from "src/app/services/proyecto-academico.service";
 import { PermisosUtils } from "src/app/utils/role-permissions";
 import { AcademicaJbpmService } from "src/app/services/academica-jbpm.service";
 import { Observable } from "rxjs/internal/Observable";
@@ -71,9 +70,13 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
     "editar",
     "borrar",
   ];
-  @ViewChild(MatPaginator) paginator!: MatPaginator;
-  @ViewChild(MatSort) sort!: MatSort;
+  @ViewChild('paginatorDocente') paginatorDocente!: MatPaginator;
+  @ViewChild('paginatorCoord') paginatorCoord!: MatPaginator;
+  @ViewChild('docenteSort') docenteSort!: MatSort;
+  @ViewChild('coordSort') coordSort!: MatSort;
 
+  vistaActiva: 'docente' | 'coordinador' = 'docente';
+  hasAttemptedToLoad: boolean = false;
   dialogConfig: MatDialogConfig;
 
   constructor(
@@ -83,10 +86,10 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
     private parametrosService: ParametrosService,
     private planDocenteMid: SgaPlanTrabajoDocenteMidService,
     private planTrabajoDocenteService: PlanTrabajoDocenteService,
-    private proyectoAcademicoService: ProyectoAcademicoService,
     private dialog: MatDialog,
     private permisosUtils: PermisosUtils,
-    private academicaJbpmService: AcademicaJbpmService
+    private academicaJbpmService: AcademicaJbpmService,
+    private cdr: ChangeDetectorRef
   ) {
     this.dataSource = new MatTableDataSource();
     this.dialogConfig = new MatDialogConfig();
@@ -103,10 +106,27 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
       const observables: { [key: string]: Observable<boolean> } = {};
       this.opcionesPermisos.forEach(opcion => {
         observables[opcion] =
-          this.permisosUtils.tienePermiso(
-            roles,
-            opcion
-          );
+          this.permisosUtils.tienePermiso(this.roles, opcion);
+      });
+      const resultados = await firstValueFrom(forkJoin(observables));
+      this.permisos = resultados;
+      console.log('Permisos:', this.permisos);
+      
+      // Inicializar vistaActiva basado en permisos
+      if (!this.permisos['tabla_docente'] && this.permisos['tabla_coordinador']) {
+        this.vistaActiva = 'coordinador';
+      } else {
+        this.vistaActiva = 'docente'; // Por defecto docente si tiene el permiso
+      }
+    });
+    this.cargarPeriodo()
+      .then((resp) => (this.periodos = resp))
+      .catch((err) => {
+        this.popUpManager.showErrorToast(
+          this.translate.instant("GLOBAL.sin_periodo")
+        );
+        this.periodos = [];
+      });
 
       });
       // Espera todos los permisos
@@ -246,8 +266,32 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
   }
 
   ngAfterViewInit() {
-    this.dataSource.paginator = this.paginator;
-    this.dataSource.sort = this.sort;
+    // Paginador/sort se adjuntan dinámicamente en loadPreasignaciones()
+  }
+
+  private attachPaginatorAndSort() {
+    // Usar setTimeout para permitir que Angular actualice el DOM y que los @ViewChild estén disponibles
+    setTimeout(() => {
+      if (this.vistaActiva === 'docente' && this.paginatorDocente && this.docenteSort) {
+        this.dataSource.paginator = this.paginatorDocente;
+        this.dataSource.sort = this.docenteSort;
+        this.cdr.detectChanges();
+        this.dataSource.paginator.firstPage();
+      } else if (this.vistaActiva === 'coordinador' && this.paginatorCoord && this.coordSort) {
+        this.dataSource.paginator = this.paginatorCoord;
+        this.dataSource.sort = this.coordSort;
+        this.cdr.detectChanges();
+        this.dataSource.paginator.firstPage();
+      }
+    }, 100);
+  }
+
+  cambiarVista(vista: 'docente' | 'coordinador') {
+    this.vistaActiva = vista;
+    this.dataSource.filter = '';
+    this.dataSource.data = [];
+    this.hasAttemptedToLoad = false;
+    this.attachPaginatorAndSort();
   }
 
   private obtenerDocumentoCoordinador(): string | null {
@@ -278,28 +322,6 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
     return null;
   }
 
-  private obtenerProyectosCoordinador(): Promise<any[]> {
-    return new Promise((resolve, reject) => {
-      const documentoCoordinador = this.obtenerDocumentoCoordinador();
-      if (!documentoCoordinador) {
-        reject(new Error("No fue posible obtener el documento del coordinador"));
-        return;
-      }
-      this.academicaJbpmService.get(`coordinador_usuario/${documentoCoordinador}`).subscribe({
-        next: (resp: any) => {
-          if (Array.isArray(resp.coordinadores.coordinador)) {
-            resolve(resp.coordinadores.coordinador);
-          } else {
-            reject(new Error("No se encontraron proyectos para el coordinador"));
-          }
-        },
-        error: (err) => {
-          reject(err);
-        },
-      });
-    });
-  }
-
   applyFilter(event: Event) {
     const filterValue = (event.target as HTMLInputElement).value;
     this.dataSource.filter = filterValue.trim().toLowerCase();
@@ -309,8 +331,110 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
     }
   }
 
+  actualizarAprobacion(evento: any, campo: 'aprobacion_docente' | 'aprobacion_proyecto') {
+    const fila = evento?.Data;
+    if (!fila || !campo || !fila[campo]) {
+      return;
+    }
+
+    fila[campo].value = !!evento?.value;
+    if (campo === 'aprobacion_docente') {
+      fila[campo].seleccionado = !!evento?.value;
+    }
+    this.dataSource.data = [...this.dataSource.data];
+  }
+
+  tienePreasignacionesSeleccionadas(): boolean {
+    return this.dataSource.data.some((preasignacion: any) =>
+      !!preasignacion?.aprobacion_docente?.seleccionado
+    );
+  }
+
+  // Reseta el check de aprobacion_proyecto para otras preasignaciones del mismo proyecto
+  private async resetearAprobacionProyecto(preasignacion: any): Promise<void> {
+    if (!preasignacion?.codigo_proyecto_academico || !preasignacion?.periodo_id) {
+      return;
+    }
+
+    // Si la preasignación no tiene aprobación docente ni aprobación proyecto,
+    // no afecta el flujo de aprobación de los demás espacios: salir sin cambios.
+    const tieneAprobacionDocente = this.getAprobacionValue(preasignacion?.aprobacion_docente);
+    const tieneAprobacionProyecto = this.getAprobacionValue(preasignacion?.aprobacion_proyecto);
+    if (!tieneAprobacionDocente && !tieneAprobacionProyecto) {
+      return;
+    }
+
+    const proyectoId = preasignacion.codigo_proyecto_academico;
+    const periodoId = preasignacion.periodo_id;
+    
+    try {
+      // Obtener todas las preasignaciones del proyecto en este período
+      const resp: any = await firstValueFrom(
+        this.planDocenteMid.get(`preasignacion?vigencia=${periodoId}`)
+      );
+
+      const preasignaciones = Array.isArray(resp?.Data) ? resp.Data : [];
+      
+      // Filtrar las preasignaciones del mismo docente y proyecto que tienen aprobacion_proyecto = true
+      const idsAResetear = preasignaciones
+        .filter((p: any) => 
+          String(p?.codigo_proyecto_academico || "").trim() === String(proyectoId).trim() &&
+          String(p?.docente_id || "").trim() === String(preasignacion.docente_id || "").trim() &&
+          p?.id !== preasignacion.id &&
+          this.getAprobacionValue(p?.aprobacion_proyecto)
+        )
+        .map((p: any) => ({ Id: p?.id || p?._id }))
+        .filter((p: any) => !!String(p.Id || "").trim());
+
+      // Si hay preasignaciones a resetear, usar el endpoint /aprobar
+      if (idsAResetear.length > 0) {
+        try {
+          const updatePayload = {
+            preasignaciones: [],
+            "no-preasignaciones": idsAResetear,
+            docente: false
+          };
+          
+          await firstValueFrom(
+            this.planDocenteMid.put("preasignacion/aprobar", updatePayload)
+          );
+        } catch (error) {
+          console.warn(`No se pudo resetear aprobacion_proyecto para las preasignaciones:`, error);
+        }
+      }
+
+      // Actualizar dataSource local también
+      this.dataSource.data.forEach((item: any) => {
+        if (
+          item.codigo_proyecto_academico === proyectoId &&
+          String(item.docente_id || "").trim() === String(preasignacion.docente_id || "").trim() &&
+          item.id !== preasignacion.id &&
+          item.aprobacion_proyecto?.value
+        ) {
+          item.aprobacion_proyecto.value = false;
+        }
+      });
+
+      // Notificar al dataSource del cambio
+      this.dataSource.data = [...this.dataSource.data];
+    } catch (error) {
+      console.warn("Error al resetear aprobacion_proyecto:", error);
+    }
+  }
+
+  // Filtra las cargas del plan docente por espacio_academico_id
+  private filtrarCargasPorEspacioAcademico(cargas: any[], espacioAcademicoId: string): any[] {
+    if (!Array.isArray(cargas) || !espacioAcademicoId) {
+      return [];
+    }
+    return cargas.filter((carga: any) =>
+      String(carga?.espacio_academico_id || carga?.id_espacio_academico || "").trim() === 
+      String(espacioAcademicoId || "").trim()
+    );
+  }
+
   private async limpiarCargaPlanDePreasignacion(preasignacion: any): Promise<boolean> {
-    if (!preasignacion?.docente_id || !preasignacion?.periodo_id || !preasignacion?.tipo_vinculacion_id) {
+    if (!preasignacion?.docente_id || !preasignacion?.periodo_id || !preasignacion?.tipo_vinculacion_id || !preasignacion?.espacio_academico_id) {
       return false;
     }
 
@@ -350,9 +474,20 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
         ? dataPlan.carga[seleccion]
         : [];
 
-      const idsADescartar = cargaActual
+      // Filtrar cargas que pertenecen al espacio académico de la preasignación
+      const cargasDelEspacio = this.filtrarCargasPorEspacioAcademico(
+        cargaActual,
+        preasignacion.espacio_academico_id
+      );
+
+      const idsADescartar = cargasDelEspacio
         .map((carga: any) => ({ id: carga.id }))
         .filter((carga: any) => !!String(carga.id || "").trim());
+
+      // Solo hacer la solicitud si hay cargas a eliminar
+      if (idsADescartar.length === 0) {
+        return true;
+      }
 
       const respuesta: RespFormat = await firstValueFrom(
         this.planDocenteMid.put("plan/", {
@@ -446,8 +581,10 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
           );
           preasignacionDialog.afterClosed().subscribe((result) => {
             if (result) {
-              this.limpiarCargaPlanDePreasignacion(preasignacion).then(() => {
-                this.loadPreasignaciones();
+              this.resetearAprobacionProyecto(preasignacion).then(() => {
+                this.limpiarCargaPlanDePreasignacion(preasignacion).then(() => {
+                  this.loadPreasignaciones();
+                });
               });
             } else {
               this.loadPreasignaciones();
@@ -476,24 +613,38 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
             )
             .then((action) => {
               if (action.value) {
-                this.eliminarPreAsignacion(event.rowData.id);
+                this.eliminarPreAsignacion(event.rowData);
               }
             });
         }
       });
   }
 
-  eliminarPreAsignacion(preAsignacionId: any) {
+  eliminarPreAsignacion(preasignacion: any) {
     this.planDocenteMid
-      .delete("preasignacion", { Id: preAsignacionId })
+      .delete("preasignacion", { Id: preasignacion.id })
       .subscribe({
-        next: (resp: RespFormat) => {
+        next: async (resp: RespFormat) => {
           if (resp.Message == "tiene colocaciones") {
             return this.popUpManager.showErrorAlert(
               this.translate.instant(
                 "ptd.no_poder_eliminar_preasignacion_tiene_colocaciones"
               )
             );
+          }
+
+          // Resetear aprobación de proyecto para otras preasignaciones del mismo proyecto
+          try {
+            await this.resetearAprobacionProyecto(preasignacion);
+          } catch (error) {
+            console.warn("No se pudo resetear las aprobaciones del proyecto", error);
+          }
+
+          // Limpiar la carga del espacio académico de la preasignación eliminada
+          try {
+            await this.limpiarCargaPlanDePreasignacion(preasignacion);
+          } catch (error) {
+            console.warn("No se pudo limpiar la carga al eliminar la preasignación", error);
           }
 
           this.popUpManager.showSuccessAlert(
@@ -543,114 +694,173 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
       )
       .then(async (action) => {
         if (action.value) {
-          this.popUpManager.showLoading();
-          try {
-            let req: {
-              preasignaciones: { Id: any }[];
-              "no-preasignaciones": { Id: any }[];
-              docente: boolean;
-            } = {
-              preasignaciones: [],
-              "no-preasignaciones": [],
-              docente: true,
-            };
-            this.dataSource.data.forEach((preasignacion) => {
-              if (preasignacion.aprobacion_docente.value) {
-                req.preasignaciones.push({ Id: preasignacion.id });
+          const preasignacionesSeleccionadas = this.dataSource.data.filter((preasignacion: any) =>
+            !!preasignacion?.aprobacion_docente?.seleccionado
+          );
+
+          if (!preasignacionesSeleccionadas.length) {
+            return this.popUpManager.showErrorToast(
+              this.translate.instant("ptd.no_hay_pendientes_aprobacion_coordinacion")
+            );
+          }
+
+          let req: {
+            preasignaciones: { Id: any }[];
+            "no-preasignaciones": { Id: any }[];
+            docente: boolean;
+          } = {
+            preasignaciones: [],
+            "no-preasignaciones": [],
+            docente: true,
+          };
+          preasignacionesSeleccionadas.forEach((preasignacion) => {
+            req.preasignaciones.push({ Id: preasignacion.id });
+          });
+          this.planDocenteMid.put("preasignacion/aprobar", req).subscribe({
+            next: (resp: RespFormat) => {
+              if (checkResponse(resp)) {
+                this.popUpManager.showSuccessAlert(
+                  this.translate.instant("ptd.aprobacion_preasignacion")
+                );
               } else {
                 req["no-preasignaciones"].push({ Id: preasignacion.id });
               }
-            });
-            const resp: RespFormat = await firstValueFrom(
-              this.planDocenteMid.put("preasignacion/aprobar", req)
-            );
-            this.popUpManager.closeLoading();
-            if (checkResponse(resp)) {
-              this.popUpManager.showSuccessAlert(
-                this.translate.instant("ptd.aprobacion_preasignacion")
-              );
-            } else {
-              this.popUpManager.showErrorAlert(
+              this.loadPreasignaciones();
+            },
+            error: (err) => {
+              this.popUpManager.showErrorToast(
                 this.translate.instant("ptd.error_aprobacion_preasignacion")
               );
-            }
-            await this.loadPreasignaciones();
-          } catch (err: any) {
-            this.popUpManager.closeLoading();
-            console.warn(err);
-            this.popUpManager.showErrorToast(
-              this.translate.instant("ptd.error_aprobacion_preasignacion")
-            );
-          }
+            },
+          });
         }
       });
   }
 
-  async loadPreasignaciones() {
-    if (this.permisos['tabla_coordinador']) {
-      try {
-        const resp: RespFormat = await firstValueFrom(
-          this.planDocenteMid.get("preasignacion?vigencia=" + this.periodo.Id)
-        );
-        if (checkResponse(resp)) {
-          let data = resp.Data;
-          if (this.proyecto && this.proyecto.Id && !this.roles.includes(ROLES.DOCENTE)) {
-            data = data.filter((item: any) => String(item.codigo_proyecto_academico) === String(this.proyecto.Id));
-          }
-          this.dataSource = new MatTableDataSource(data);
-        } else {
-          this.dataSource = new MatTableDataSource();
-          this.popUpManager.showErrorAlert(
-            this.translate.instant("ptd.error_no_found_preasignaciones")
-          );
-        }
-      } catch (err: any) {
-        this.dataSource = new MatTableDataSource();
+  loadPreasignaciones() {
+    this.dataSource.filter = '';
+
+    if (this.vistaActiva === 'coordinador') {
+      if (!this.permisos['tabla_coordinador']) {
+        this.dataSource.data = [];
         this.popUpManager.showErrorToast(
-          this.translate.instant("ptd.error_no_found_preasignaciones")
+          this.translate.instant('GLOBAL.acceso_denegado')
         );
+        this.attachPaginatorAndSort();
+        return;
       }
-    } else if (this.permisos['tabla_docente']) {
-      try {
-        const id_tercero = await this.userService.getPersonaId();
-        const resp: RespFormat = await firstValueFrom(
-          this.planDocenteMid.get(
-            "preasignacion/docente?docente=" +
-              id_tercero +
-              "&vigencia=" +
-              this.periodo.Id
-          )
+
+      if (!this.proyecto || !this.proyecto.Codigo) {
+        this.dataSource.data = [];
+        this.popUpManager.showErrorToast(
+          this.translate.instant('GLOBAL.debe_seleccionar_proyecto')
         );
-        if (checkResponse(resp)) {
-          let data = resp.Data;
-          if (this.proyecto && this.proyecto.Id && !this.roles.includes(ROLES.DOCENTE)) {
-            data = data.filter((item: any) => String(item.codigo_proyecto_academico) === String(this.proyecto.Id));
-          }
-          this.dataSource = new MatTableDataSource(data);
-        } else {
-          this.dataSource = new MatTableDataSource();
-          this.popUpManager.showErrorAlert(
-            this.translate.instant("ptd.error_no_found_preasignaciones")
-          );
-        }
-      } catch (err: any) {
-        this.dataSource = new MatTableDataSource();
-        if (err.message && err.message.includes('tercero_id')) {
+        this.attachPaginatorAndSort();
+        return;
+      }
+
+      this.planDocenteMid
+        .get(`preasignacion?vigencia=${this.periodo.Id}`)
+        .subscribe({
+          next: (resp: RespFormat) => {
+            this.hasAttemptedToLoad = true;
+            if (checkResponse(resp)) {
+              const datosFiltrados = (Array.isArray(resp.Data) ? resp.Data : []).filter((preasignacion: any) =>
+                String(preasignacion?.codigo_proyecto_academico || "").trim() === String(this.proyecto?.Codigo || "").trim()
+              );
+              this.dataSource.data = datosFiltrados.map((preasignacion: any) => ({
+                ...preasignacion,
+                aprobacion_docente: {
+                  ...preasignacion.aprobacion_docente,
+                  seleccionado: false,
+                },
+              }));
+              this.dataSource.paginator?.firstPage();
+            } else {
+              this.dataSource.data = [];
+              this.popUpManager.showErrorAlert(
+                this.translate.instant("ptd.error_aprobacion_preasignacion")
+              );
+            }
+            this.attachPaginatorAndSort();
+          },
+          error: () => {
+            this.hasAttemptedToLoad = true;
+            this.dataSource.data = [];
+            this.popUpManager.showErrorToast(
+              this.translate.instant("ptd.error_aprobacion_preasignacion")
+            );
+            this.attachPaginatorAndSort();
+          },
+        });
+      return;
+    }
+
+    if (this.vistaActiva === 'docente') {
+      if (!this.permisos['tabla_docente']) {
+        this.dataSource.data = [];
+        this.popUpManager.showErrorToast(
+          this.translate.instant('GLOBAL.acceso_denegado')
+        );
+        this.attachPaginatorAndSort();
+        return;
+      }
+
+      this.userService
+        .getPersonaId()
+        .then((id_tercero) => {
+          this.planDocenteMid
+            .get(
+              "preasignacion/docente?docente=" +
+                id_tercero +
+                "&vigencia=" +
+                this.periodo.Id
+            )
+            .subscribe({
+              next: (resp: RespFormat) => {
+                this.hasAttemptedToLoad = true;
+                if (checkResponse(resp)) {
+                  this.dataSource.data = (Array.isArray(resp.Data) ? resp.Data : []).map((preasignacion: any) => ({
+                    ...preasignacion,
+                    aprobacion_docente: {
+                      ...preasignacion.aprobacion_docente,
+                      seleccionado: false,
+                    },
+                  }));
+                  this.dataSource.paginator?.firstPage();
+                } else {
+                  this.dataSource.data = [];
+                  this.popUpManager.showErrorAlert(
+                    this.translate.instant("ptd.error_no_found_preasignaciones")
+                  );
+                }
+                this.attachPaginatorAndSort();
+              },
+              error: () => {
+                this.hasAttemptedToLoad = true;
+                this.dataSource.data = [];
+                this.popUpManager.showErrorToast(
+                  this.translate.instant("ptd.error_no_found_preasignaciones")
+                );
+                this.attachPaginatorAndSort();
+              },
+            });
+        })
+        .catch(() => {
+          this.dataSource.data = [];
           this.popUpManager.showErrorToast(
             this.translate.instant("GLOBAL.error_no_found_tercero_id")
           );
-        } else {
-          this.popUpManager.showErrorToast(
-            this.translate.instant("ptd.error_no_found_preasignaciones")
-          );
-        }
-      }
-    } else {
-      this.dataSource = new MatTableDataSource();
-      this.popUpManager.showErrorToast(
-        this.translate.instant("GLOBAL.acceso_denegado")
-      );
+          this.attachPaginatorAndSort();
+        });
+      return;
     }
+
+    this.dataSource.data = [];
+    this.popUpManager.showErrorToast(
+      this.translate.instant("GLOBAL.acceso_denegado")
+    );
+    this.attachPaginatorAndSort();
   }
 
   cargarPeriodo(): Promise<Periodo[]> {
@@ -676,7 +886,9 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
     this.proyecto = proyecto.value;
     this.periodo = new Periodo({});
     this.periodosFiltrados = [];
-    this.dataSource = new MatTableDataSource();
+    this.dataSource.data = [];
+    this.dataSource.filter = '';
+    this.hasAttemptedToLoad = false;
     if (this.proyecto) {
       this.filtrarPeriodosPorCalendario();
     }
@@ -684,7 +896,9 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
 
   async selectPeriodo(periodo: any) {
     this.periodo = periodo.value;
-    this.dataSource = new MatTableDataSource();
+    this.dataSource.data = [];
+    this.dataSource.filter = '';
+    this.hasAttemptedToLoad = false;
     if (this.periodo) {
       this.verificarRangoFechas();
       if (!this.enRangoCalendario) {

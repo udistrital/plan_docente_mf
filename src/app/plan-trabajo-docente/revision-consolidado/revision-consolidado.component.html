@@ -80,12 +80,6 @@
                             <mat-header-cell *matHeaderCellDef mat-sort-header> <b>{{ 'GLOBAL.estado' | translate }}</b> </mat-header-cell>
                             <mat-cell *matCellDef="let row"> {{row.estado}} </mat-cell>
                         </ng-container>
-                        <ng-container matColumnDef="enviar">
-                            <mat-header-cell *matHeaderCellDef> <b>{{ 'GLOBAL.enviar' | translate }}</b> </mat-header-cell>
-                            <mat-cell *matCellDef="let row">
-                                <action-button [rowData]="row" [value]="row.enviar" (valueChanged)="accionEnviar($event)"></action-button>
-                            </mat-cell>
-                        </ng-container>
                         <mat-header-row *matHeaderRowDef="displayedColumns"></mat-header-row>
                         <mat-row *matRowDef="let row; columns: displayedColumns;"></mat-row>
                     </mat-table>

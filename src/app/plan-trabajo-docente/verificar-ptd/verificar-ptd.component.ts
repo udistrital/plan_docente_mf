@@ -1,4 +1,5 @@
 import { AfterViewInit, Component, OnInit, ViewChild } from '@angular/core';
+import { SelectionModel } from '@angular/cdk/collections';
 import { MatPaginator } from '@angular/material/paginator';
 import { MatSort } from '@angular/material/sort';
 import { MatTableDataSource } from '@angular/material/table';
@@ -15,7 +16,6 @@ import { Periodo } from 'src/app/models/parametros/periodo';
 import { RespFormat } from 'src/app/models/response-format';
 import { checkContent, checkResponse } from 'src/app/utils/verify-response';
 import { EstadoPlan } from 'src/app/models/plan-trabajo-docente/estado-plan';
-import { ProyectoAcademicoService } from 'src/app/services/proyecto-academico.service';
 import { FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { TercerosService } from 'src/app/services/terceros.service';
 import { MatDialog, MatDialogConfig } from '@angular/material/dialog';
@@ -38,9 +38,11 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
   rolesCoord: string[] = [ROLES.COORDINADOR, ROLES.ADMIN_DOCENCIA];
   isCoordinator: string|undefined = undefined;
   roles: string[] = [];
+  selection = new SelectionModel<any>(true, []);
+  bulkApprovalInProgress = false;
   
   dataSource: MatTableDataSource<any>;
-  displayedColumns: string[] = ["nombre", "identificacion", "tipo_vinculacion", "periodo_academico", "soporte_documental", "gestion", "estado"];
+  displayedColumns: string[] = ["seleccion", "nombre", "identificacion", "tipo_vinculacion", "periodo_academico", "soporte_documental", "gestion", "semaforo", "estado"];
   @ViewChild(MatPaginator) paginator!: MatPaginator;
   @ViewChild(MatSort) sort!: MatSort;
 
@@ -68,7 +70,6 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
     private userService: UserService,
     private sgaPlanTrabajoDocenteMidService: SgaPlanTrabajoDocenteMidService,
     private parametrosService: ParametrosService,
-    private proyectoAcademicoService: ProyectoAcademicoService,
     private planTrabajoDocenteService: PlanTrabajoDocenteService,
     private gestorDocumental: GestorDocumentalService,
     private builder: FormBuilder,
@@ -225,6 +226,175 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
     }
   }
 
+  getSemaforoEstado(row: any): { color: string; tooltip: string; icon: string } {
+    const codigo = String(row?.estado_codigo || row?.estado || '').trim();
+    if (codigo === 'APR') {
+      return {
+        color: '#4CAF50',
+        tooltip: this.translate.instant('ptd.semaforo_verificar_aprobado'),
+        icon: 'check_circle',
+      };
+    }
+    if (codigo === 'ENV_DOC') {
+      return {
+        color: '#FFC107',
+        tooltip: this.translate.instant('ptd.semaforo_verificar_enviado_coordinacion'),
+        icon: 'autorenew',
+      };
+    }
+    // N_APR and default
+    return {
+      color: '#F44336',
+      tooltip: this.translate.instant('ptd.semaforo_verificar_no_aprobado'),
+      icon: 'cancel',
+    };
+  }
+
+  esPlanAprobable(row: any): boolean {
+    return String(row?.estado_codigo || row?.estado || '').trim() === 'ENV_DOC';
+  }
+
+  hayPlanesSeleccionados(): boolean {
+    return this.selection.selected.some((row) => this.esPlanAprobable(row));
+  }
+
+  isAllSelected(): boolean {
+    const filasSeleccionables = this.dataSource.data.filter((row) => this.esPlanAprobable(row));
+    return filasSeleccionables.length > 0 && filasSeleccionables.every((row) => this.selection.isSelected(row));
+  }
+
+  toggleAllRows(): void {
+    const filasSeleccionables = this.dataSource.data.filter((row) => this.esPlanAprobable(row));
+    if (this.isAllSelected()) {
+      this.selection.deselect(...filasSeleccionables);
+      return;
+    }
+    this.selection.select(...filasSeleccionables.filter((row) => !this.selection.isSelected(row)));
+  }
+
+  toggleFila(row: any): void {
+    if (!this.esPlanAprobable(row)) {
+      return;
+    }
+    this.selection.toggle(row);
+  }
+
+  limpiarSeleccion(): void {
+    this.selection.clear();
+  }
+
+  private construirPlanParaActualizacion(putPlan: any, concertado: boolean, observacion: string, responsableId: number, estadoPlan: EstadoPlan) {
+    const planActualizado = _cloneDeep(putPlan);
+    let respuestaJson: any = {};
+
+    if (planActualizado.respuesta) {
+      try {
+        respuestaJson = JSON.parse(planActualizado.respuesta);
+      } catch {
+        respuestaJson = {};
+      }
+    }
+
+    respuestaJson.concertado = concertado;
+    respuestaJson.observacion = observacion;
+    respuestaJson.responsable_id = responsableId;
+
+    planActualizado.respuesta = JSON.stringify(respuestaJson);
+    planActualizado.estado_plan_id = estadoPlan._id;
+
+    return planActualizado;
+  }
+
+  private guardarPlanDocente(putPlan: any, mostrarAlertas: boolean = true): Promise<void> {
+    return new Promise((resolve, reject) => {
+      this.planTrabajoDocenteService.put('plan_docente/' + putPlan._id, putPlan).subscribe({
+        next: () => {
+          if (mostrarAlertas) {
+            this.popUpManager.showSuccessAlert(this.translate.instant('ptd.respuesta_enviada'));
+          }
+          resolve();
+        },
+        error: (err) => {
+          if (mostrarAlertas) {
+            this.popUpManager.showErrorAlert(this.translate.instant('ptd.error_respuesta_enviada'));
+          }
+          reject(err);
+        }
+      });
+    });
+  }
+
+  async aprobarSeleccionados() {
+    const planDocenteIds = Array.from(
+      new Set(
+        this.selection.selected
+          .filter((row) => this.esPlanAprobable(row))
+          .map((row) => String(row?.id || row?._id || '').trim())
+          .filter((id) => !!id)
+      )
+    );
+
+    if (!planDocenteIds.length) {
+      this.popUpManager.showErrorToast(this.translate.instant('ptd.sin_planes_seleccionados'));
+      return;
+    }
+
+    const confirmacion = await this.popUpManager.showPopUpGeneric(
+      this.translate.instant('ptd.aprobar_seleccionados'),
+      this.translate.instant('ptd.confirmar_aprobacion_masiva', { cantidad: planDocenteIds.length }),
+      MODALS.QUESTION,
+      true
+    );
+
+    if (!confirmacion.value) {
+      return;
+    }
+
+    this.bulkApprovalInProgress = true;
+    try {
+      const responsableId = await this.userService.getPersonaId();
+      const observacionMasiva = this.translate.instant('ptd.aprobacion_masiva_observacion');
+
+      const respAprobacionMasiva: any = await firstValueFrom(
+        this.sgaPlanTrabajoDocenteMidService.put('plan/aprobacion_masiva', {
+          plan_docente_ids: planDocenteIds,
+          responsable_id: responsableId,
+          observacion: observacionMasiva,
+        })
+      );
+
+      const resultados = Array.isArray(respAprobacionMasiva?.Data?.resultados)
+        ? respAprobacionMasiva.Data.resultados
+        : [];
+      const aprobados = Number(respAprobacionMasiva?.Data?.aprobados ?? resultados.filter((resultado: any) => resultado.aprobado).length);
+      const fallidos = Number(respAprobacionMasiva?.Data?.fallidos ?? resultados.filter((resultado: any) => !resultado.aprobado).length);
+
+      if (aprobados > 0) {
+        this.popUpManager.showSuccessAlert(
+          this.translate.instant('ptd.aprobacion_masiva_exitosa', { cantidad: aprobados })
+        );
+      }
+      if (fallidos > 0) {
+        this.popUpManager.showErrorToast(
+          this.translate.instant('ptd.aprobacion_masiva_error', { cantidad: fallidos })
+        );
+      }
+
+      this.limpiarSeleccion();
+      await this.filtrarPlanes();
+    } catch (error) {
+      console.warn(error);
+      this.popUpManager.showPopUpGeneric(
+        this.translate.instant('ERROR.titulo_generico'),
+        this.translate.instant('ERROR.persiste_error_comunique_OAS'),
+        MODALS.ERROR,
+        false
+      );
+    } finally {
+      this.bulkApprovalInProgress = false;
+    }
+  }
+
   applyFilter(event: Event) {
     const filterValue = (event.target as HTMLInputElement).value;
     this.dataSource.filter = filterValue.trim().toLowerCase();
@@ -343,45 +513,122 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
     this.periodos.select = undefined;
     this.periodos.opciones = [];
     this.dataSource = new MatTableDataSource();
+    this.limpiarSeleccion();
     if (this.proyectos.select) {
       this.filtrarPeriodosPorCalendario();
     }
   }
 
-  onPeriodoChange() {
+  async onPeriodoChange() {
     this.dataSource = new MatTableDataSource();
+    this.limpiarSeleccion();
     if (this.periodos.select) {
       this.verificarRangoFechas();
       if (!this.enRangoCalendario) {
         this.popUpManager.showErrorToast("El periodo seleccionado no se encuentra en el rango de fechas.");
+        return;
+      }
+
+      if (this.proyectos.select) {
+        await this.filtrarPlanes();
       }
     }
   }
 
-  filtrarPlanes(): void {
+  async filtrarPlanes(): Promise<void> {
+    this.limpiarSeleccion();
     if (!this.enRangoCalendario) {
       this.popUpManager.showErrorToast("El periodo seleccionado no se encuentra en el rango de fechas.");
       return;
     }
     if (this.periodos.select && (this.proyectos.select || this.roles.includes(ROLES.DOCENTE))) {
-      let url = `plan/preaprobado?vigencia=${this.periodos.select.Id}`;
-      if (this.proyectos.select && !this.roles.includes(ROLES.DOCENTE)) {
-        url += `&proyecto=${this.proyectos.select.Id}`;
+      const estadosVerificacion = this.estadosPlan.opciones
+        .filter((estado) => ["ENV_DOC", "APR", "N_APR"].includes(estado.codigo_abreviacion))
+        .map((estado) => estado._id)
+        .filter((id) => !!id);
+
+      if (!estadosVerificacion.length) {
+        this.dataSource = new MatTableDataSource();
+        return;
       }
-      this.sgaPlanTrabajoDocenteMidService.get(url).subscribe(
-        (resp) => {
-          let planes = <any[]>resp.Data;
-          planes.forEach(plan => {
-            plan.periodo_academico = this.periodos.opciones.find(p => p.Id === plan.periodo_academico)?.Nombre;
-            plan.estado = this.estadosPlan.opciones.find(e => e._id === plan.estado)?.nombre;
-          })
-          this.dataSource = new MatTableDataSource(planes);
-        }, (err) => {
-          this.dataSource = new MatTableDataSource();
-          console.warn(err);
-          this.popUpManager.showPopUpGeneric(this.translate.instant('ptd.verificacion_ptd'),this.translate.instant('ptd.no_planes_particulares'), MODALS.WARNING, false)
-        }
+
+      const respuestas = await Promise.all(
+        estadosVerificacion.map((estadoId) =>
+          firstValueFrom(
+            this.planTrabajoDocenteService.get(
+              `plan_docente?query=activo:true,periodo_id:${this.periodos.select.Id},estado_plan_id:${estadoId}&limit=0`
+            )
+          )
+        )
       );
+
+      const planes = respuestas.flatMap((respuesta: any) =>
+        Array.isArray(respuesta?.Data) ? respuesta.Data : []
+      );
+      const proyectoSeleccionado = String(this.proyectos.select?.Id || "").trim();
+      const periodoSeleccionado = this.periodos.opciones.find(
+        (periodo) => periodo.Id === this.periodos.select.Id
+      )?.Nombre;
+
+      const resultados: any[] = [];
+
+      for (const plan of planes) {
+        const detallePlan: any = await firstValueFrom(
+          this.sgaPlanTrabajoDocenteMidService.get(
+            `plan?docente=${plan.docente_id}&vigencia=${plan.periodo_id}&vinculacion=${plan.tipo_vinculacion_id}`
+          )
+        );
+
+        const seleccion = Number(detallePlan?.Data?.seleccion || 0);
+        const espacios = Array.isArray(detallePlan?.Data?.espacios_academicos?.[seleccion])
+          ? detallePlan.Data.espacios_academicos[seleccion]
+          : [];
+
+        const perteneceProyecto = !proyectoSeleccionado || espacios.some((espacio: any) =>
+          String(espacio?.proyecto_id || espacio?.proyecto_academico_id || "").trim() === proyectoSeleccionado
+        );
+
+        if (!perteneceProyecto) {
+          continue;
+        }
+
+        const docente = detallePlan?.Data?.docente || {};
+        const tipoVinculacion = Array.isArray(detallePlan?.Data?.tipo_vinculacion)
+          ? detallePlan.Data.tipo_vinculacion[0]
+          : undefined;
+        const estadoPlan = this.estadosPlan.opciones.find(
+          (estado) => estado._id === plan.estado_plan_id
+        );
+
+        resultados.push({
+          id: plan._id || plan.id,
+          nombre: docente.nombre1 && docente.apellido1
+            ? `${docente.nombre1} ${docente.apellido1}`
+            : docente.nombre || "",
+          identificacion: docente.identificacion || "",
+          tipo_vinculacion: tipoVinculacion?.nombre || "",
+          periodo_academico: periodoSeleccionado || detallePlan?.Data?.periodo_academico || "",
+          soporte_documental: {
+            value: plan.soporte_documental,
+            type: "ver",
+            disabled: !plan.soporte_documental || estadoPlan?.codigo_abreviacion !== "APR",
+          },
+          gestion: {
+            value: undefined,
+            type: "editar",
+            disabled: false,
+          },
+          estado: estadoPlan ? estadoPlan.nombre : plan.estado_plan_id,
+          estado_codigo: estadoPlan ? estadoPlan.codigo_abreviacion : plan.estado_plan_id,
+          tercero_id: plan.docente_id,
+          vinculacion_id: plan.tipo_vinculacion_id,
+        });
+      }
+
+      this.dataSource = new MatTableDataSource(resultados);
+      this.dataSource.paginator = this.paginator;
+      this.dataSource.sort = this.sort;
+      this.limpiarSeleccion();
     }
   }
 
@@ -460,14 +707,14 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
       async action => {
         if (action.value) {
           this.userService.getPersonaId().then(async terceroId => {
-            let putPlan = _cloneDeep(this.planDocenteEstadoGet);
-            let respuestaJson = putPlan.respuesta ? JSON.parse(putPlan.respuesta) : {};
-            respuestaJson["concertado"] = this.formVerificar.get('DeAcuerdo')?.value;
-            respuestaJson["observacion"] = this.formVerificar.get('Observaciones')?.value;
-            respuestaJson["responsable_id"] = terceroId;
-            putPlan.respuesta = JSON.stringify(respuestaJson);
             const estAprov = this.formVerificar.get('EstadoAprobado')?.value;
-            putPlan.estado_plan_id = estAprov._id;
+            const putPlan = this.construirPlanParaActualizacion(
+              this.planDocenteEstadoGet,
+              this.formVerificar.get('DeAcuerdo')?.value,
+              this.formVerificar.get('Observaciones')?.value,
+              terceroId,
+              estAprov
+            );
             
             if (estAprov.codigo_abreviacion === "APR") {
               const dialogParams = new MatDialogConfig();
@@ -477,7 +724,7 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
               dialogParams.maxHeight = '390px';
               dialogParams.data = {
                 docenteId: putPlan.docente_id,
-                responsableId: respuestaJson.responsable_id,
+                responsableId: terceroId,
                 vinculacionId: this.dataDocente.tipo_vinculacion_id,
                 periodoId: this.periodos.select.Id,
               };
@@ -485,14 +732,7 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
               const outDialog = await dialogFirma.afterClosed().toPromise();
               if (outDialog.document) {
                 putPlan.soporte_documental = outDialog.document;
-                this.planTrabajoDocenteService.put('plan_docente/'+putPlan._id, putPlan).subscribe(
-                  resp => {
-                    this.popUpManager.showSuccessAlert(this.translate.instant('ptd.respuesta_enviada'))
-                  }, err => {
-                    this.popUpManager.showErrorAlert(this.translate.instant('ptd.error_respuesta_enviada'))
-                    console.warn(err);
-                  }
-                );
+                this.guardarPlanDocente(putPlan);
               } else if (outDialog.error) {
                 this.popUpManager.showPopUpGeneric(this.translate.instant('ERROR.titulo_generico'),
                                           this.translate.instant('ERROR.fallo_informacion_en') + ': <b>' + outDialog.from + '</b>.<br><br>' +
@@ -500,14 +740,7 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
                                           MODALS.ERROR, false);
               }
             } else {
-              this.planTrabajoDocenteService.put('plan_docente/'+putPlan._id, putPlan).subscribe(
-                resp => {
-                  this.popUpManager.showSuccessAlert(this.translate.instant('ptd.respuesta_enviada'))
-                }, err => {
-                  this.popUpManager.showErrorAlert(this.translate.instant('ptd.error_respuesta_enviada'))
-                  console.warn(err);
-                }
-              );
+              this.guardarPlanDocente(putPlan);
             }
           }).catch(err => {
             console.warn(err);
@@ -582,6 +815,7 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
 
   regresar() {
     this.filtrarPlanes();
+    this.limpiarSeleccion();
     this.vista = VIEWS.LIST;
   }
 
