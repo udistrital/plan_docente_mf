@@ -83,7 +83,7 @@
 <!-- horario carga lectiva -->
 <horario-carga-lectiva
   [WorkingMode]="soloLectura ? ACTIONS.VIEW : canEdit"
-  [Rol]="rolIs"
+  [Rol]="rolIs ? rolIs : rolesIs[0]"
   [Data]="detalleAsignacion"
   (OutLoading)="doReload($event)"
   (DataChanged)="whatChanged($event)"

@@ -38,6 +38,7 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
   vistaActiva: 'docente' | 'coordinador' = 'docente';
 
   roles: string[] = [];
+  rolVista: string = '';
   canEdit: Symbol = ACTIONS.VIEW;
 
   opcionesPermisos: string[] = [
@@ -131,7 +132,6 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
       } else {
         this.vistaActiva = 'docente';
       }
-      
       // Cargar proyectos del coordinador si tiene permiso
       if (this.permisos['enviar_coordinador']) {
         this.proyectosCoordinador =
@@ -314,6 +314,11 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
   }
 
   async accionGestion(event: any) {
+    if(this.vistaActiva == 'coordinador'){
+      this.rolVista = ROLES.COORDINADOR;
+    }else if(this.vistaActiva == 'docente'){
+      this.rolVista = ROLES.DOCENTE;
+    }
     if (event.rowData.gestion.type == "editar") {
       this.canEdit = ACTIONS.EDIT;
     } else {
