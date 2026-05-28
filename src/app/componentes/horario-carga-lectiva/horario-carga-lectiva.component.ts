@@ -29,6 +29,7 @@ import { DialogoVerDetalleColocacionComponent } from "src/app/dialog-components/
 import { EspaciosAcademicosService } from "src/app/services/espacios-academicos.service";
 import { NewNuxeoService } from "src/app/services/new_nuxeo.service";
 import { DocumentoService } from "src/app/services/documento.service";
+import { ParametrosService } from "src/app/services/parametros.service";
 
 @Component({
   selector: "horario-carga-lectiva",
@@ -118,6 +119,8 @@ export class HorarioCargaLectivaComponent implements OnInit, OnChanges {
   manageByTime: boolean = false;
   puedeEditarPTD: boolean = false;
   private dragEnabled = false;
+  private readonly TIEMPO_COMPLETO = ["DCTC", "TCO"];
+  private readonly MEDIO_TIEMPO = ["DCMT", "MTO"];
 
   // Tipo de documento en documento_crud para soportes de PTD
   private readonly codigoAbreviacionTipoDocPtd = "SOPPLTRDOC";
@@ -125,6 +128,7 @@ export class HorarioCargaLectivaComponent implements OnInit, OnChanges {
 
   banderaInfoNoSoltarTarjeta = false;
   mostrarDetalleActividades = false;
+  mostrarSelectorActividadesNoLectivas = false;
 
   constructor(
     public dialog: MatDialog,
@@ -138,7 +142,8 @@ export class HorarioCargaLectivaComponent implements OnInit, OnChanges {
     private academicaJbpmService: AcademicaJbpmService,
     private readonly elementRef: ElementRef,
     private gestorDocumentalService: NewNuxeoService,
-    private documentoService: DocumentoService
+    private documentoService: DocumentoService,
+    private parametrosService: ParametrosService
   ) {
     this.contenedorCargaLectiva = this.elementRef.nativeElement;
     this.ubicacionForm = this.builder.group({});
@@ -166,7 +171,9 @@ export class HorarioCargaLectivaComponent implements OnInit, OnChanges {
 
   async ngOnInit() {
     await this.cargarTipoDocumentoSoporte();
-
+    const roles = typeof this.Rol === 'string' && this.Rol.trim().length > 0 ? [this.Rol] : [];
+    this.isDocente = roles.includes(ROLES.DOCENTE) && this.Rol==ROLES.DOCENTE;
+    this.isCoordinador = roles.includes(ROLES.ADMIN_DOCENCIA) || roles.includes(ROLES.COORDINADOR) && (this.Rol==ROLES.ADMIN_DOCENCIA || this.Rol==ROLES.COORDINADOR);
     this.getSedes().then(() => {
       this.OutLoading.emit(false);
     });
@@ -185,7 +192,7 @@ export class HorarioCargaLectivaComponent implements OnInit, OnChanges {
     this.ubicacionForm.get("edificio")?.setValue(undefined);
     this.ubicacionForm.get("salon")?.setValue(undefined);
     this.opcionesEdificios = [];
-
+    this.actualizarVisibilidadCargaNoLectiva();
     this.searchTerm$.pipe(distinctUntilChanged()).subscribe((response: any) => {
       this.opcionesSalonesFiltrados = this.opcionesSalones.filter(
         (value, index, array) =>
@@ -420,9 +427,6 @@ export class HorarioCargaLectivaComponent implements OnInit, OnChanges {
   async ngOnChanges() {
     if (this.Data) {
       this.edit = this.WorkingMode == ACTIONS.EDIT;
-      this.isDocente = this.Rol == ROLES.DOCENTE;
-      this.isCoordinador =
-        this.Rol == ROLES.ADMIN_DOCENCIA || this.Rol == ROLES.COORDINADOR;
       this.vinculaciones = this.Data.tipo_vinculacion;
       this.seleccion = this.Data.seleccion;
       this.vinculacionSelected = this.vinculaciones[this.seleccion];
@@ -449,6 +453,8 @@ export class HorarioCargaLectivaComponent implements OnInit, OnChanges {
       this.listaCargaLectiva = [];
     }
   }
+
+  
 
   getDragPosition(eventDrag: CdkDragMove) {
     const contenedor: DOMRect =
@@ -1138,17 +1144,14 @@ export class HorarioCargaLectivaComponent implements OnInit, OnChanges {
         totalHorasLectivas += Number(element.horas);
       }
       if (element.tipo === 2) {
-        console.log(element);
         const actividad = this.actividades.find(
           (a: any) => a._id === element.idActividad
         );
-        console.log(actividad);
         const codigo = actividad?.codigo_abreviacion;
 
         if (codigo === "PCCTE") {
           totalHorasPCCTE += Number(element.horas);
         }
-        console.log("Horas PCCTE acumuladas:", totalHorasPCCTE);
       }
       if (!element.bloqueado) {
         const sedeId =
@@ -1230,7 +1233,7 @@ export class HorarioCargaLectivaComponent implements OnInit, OnChanges {
       });
   }
 
-  selectVinculacion(event: any) {
+  async selectVinculacion(event: any) {
     this.asignaturaSelected = undefined;
     if (event.value == undefined) {
       this.asignaturas = [];
@@ -1243,7 +1246,55 @@ export class HorarioCargaLectivaComponent implements OnInit, OnChanges {
         }
       }
     }
+    this.actualizarVisibilidadCargaNoLectiva();
     this.blockcargas();
+  }
+
+  async actualizarVisibilidadCargaNoLectiva() {
+    if (!this.isDocente || !this.vinculacionSelected) {
+      this.mostrarSelectorActividadesNoLectivas = false;
+      this.actividadSelected = undefined;
+      return;
+    }
+    const codigosAbreviacion = await this.obtenerCodigoAbreviacionVinculacion();
+    this.mostrarSelectorActividadesNoLectivas = this.esCodigoVinculacionConCargaNoLectiva(codigosAbreviacion);
+    if (!this.mostrarSelectorActividadesNoLectivas) {
+      this.actividadSelected = undefined;
+    }
+  }
+
+  esCodigoVinculacionConCargaNoLectiva(codigoAbreviacion: string | null): boolean {
+    if (!codigoAbreviacion) {
+      return false;
+    }
+    const codigoNormalizado = String(codigoAbreviacion).trim().toUpperCase();
+    return (
+      this.TIEMPO_COMPLETO.includes(codigoNormalizado) ||
+      this.MEDIO_TIEMPO.includes(codigoNormalizado)
+    );
+  }
+
+  async obtenerCodigoAbreviacionVinculacion(): Promise<string> {
+        if (!this.vinculacionSelected?.id) {
+          return "";
+        }
+        try {
+          const parametroResp: any = await firstValueFrom(
+            this.parametrosService.get(
+              `parametro?query=Id:${this.vinculacionSelected?.id}&fields=CodigoAbreviacion`
+            )
+          );
+          return String(
+            parametroResp?.Data?.[0]?.CodigoAbreviacion || ""
+          ).trim();
+        } catch (error) {
+          console.warn(
+            "No fue posible obtener código de abreviación para vinculación",
+            this.vinculacionSelected?.id,
+            error
+          );
+          throw error;
+        }
   }
 
   blockcargas() {

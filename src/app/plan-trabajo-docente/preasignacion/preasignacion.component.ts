@@ -95,61 +95,69 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
     this.dialogConfig = new MatDialogConfig();
   }
 
-  ngOnInit() {
-    this.cargarEventoPTD();
-    this.userService.getUserRoles().then(async (roles) => {
+  async ngOnInit() {
+    this.popUpManager.showLoading();
+    try {
+      await this.cargarEventoPTD();
+      // Espera roles
+      const roles = await this.userService.getUserRoles();
       this.roles = roles;
+      // Construcción observables permisos
       const observables: { [key: string]: Observable<boolean> } = {};
       this.opcionesPermisos.forEach(opcion => {
         observables[opcion] =
           this.permisosUtils.tienePermiso(this.roles, opcion);
       });
-      const resultados = await firstValueFrom(forkJoin(observables));
-      this.permisos = resultados;
+      this.permisos = await firstValueFrom(forkJoin(observables));
       console.log('Permisos:', this.permisos);
       
       // Inicializar vistaActiva basado en permisos
       if (!this.permisos['tabla_docente'] && this.permisos['tabla_coordinador']) {
         this.vistaActiva = 'coordinador';
       } else {
-        this.vistaActiva = 'docente'; // Por defecto docente si tiene el permiso
+        this.vistaActiva = 'docente';
       }
-    });
-    this.cargarPeriodo()
-      .then((resp) => (this.periodos = resp))
-      .catch((err) => {
-        this.popUpManager.showErrorToast(
-          this.translate.instant("GLOBAL.sin_periodo")
-        );
-        this.periodos = [];
-      });
-
-    this.dialogConfig.width = "65vw";
-    this.dialogConfig.minWidth = "700px";
-    this.dialogConfig.height = "65vh";
-    this.dialogConfig.maxHeight = "615px";
-    this.dialogConfig.data = {};
+      this.periodos = await this.cargarPeriodo();
+      this.dialogConfig.width = "65vw";
+      this.dialogConfig.minWidth = "700px";
+      this.dialogConfig.height = "65vh";
+      this.dialogConfig.maxHeight = "615px";
+      this.dialogConfig.data = {};
+    } catch (err) {
+      this.popUpManager.showErrorAlert(this.translate.instant("ERROR.persiste_error_comunique_OAS"));
+    } finally {
+      this.popUpManager.closeLoading();
+    }
   }
 
-  cargarEventoPTD() {
-    this.planDocenteMid.get("calendario/eventos").subscribe({
-      next: (resp: any) => {
-        if (checkContent(resp)) {
-          const eventos = Array.isArray(resp.Data) ? resp.Data : [];
-          const evento = eventos.find((e: any) => e.Descripcion === "PLANES DE TRABAJO DOCENTES");
-          if (evento) {
-            this.codigoEventoPTD = evento.CodigoEvento;
-            this.cargarCalendarioEventos().then(eventosCalendario => {
-              this.calendarEventosPTD = eventosCalendario;
-              this.resolverProyectosDesdeCalendario();
-            }).catch(err => console.warn(err));
-          }
-        }
-      },
-      error: (err: any) => {
-        console.warn("Error obteniendo calendario/eventos:", err);
+  async cargarEventoPTD(): Promise<void> {
+    const resp: any = await firstValueFrom(
+      this.planDocenteMid.get("calendario/eventos")
+    );
+
+    if (checkContent(resp)) {
+
+      const eventos = Array.isArray(resp.Data)
+        ? resp.Data
+        : [];
+
+      const evento = eventos.find(
+        (e: any) =>
+          e.Descripcion === "PLANES DE TRABAJO DOCENTES"
+      );
+
+      if (evento) {
+
+        this.codigoEventoPTD = evento.CodigoEvento;
+
+        const eventosCalendario =
+          await this.cargarCalendarioEventos();
+
+        this.calendarEventosPTD = eventosCalendario;
+
+        this.resolverProyectosDesdeCalendario();
       }
-    });
+    }
   }
 
   cargarCalendarioEventos(): Promise<any[]> {
@@ -484,6 +492,55 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
     }
   }
 
+  accionEnviar(event: any) {
+    if (!this.permisos['tabla_coordinador']) {
+      return this.popUpManager.showErrorToast(
+        this.translate.instant('GLOBAL.acceso_denegado')
+      );
+    }
+
+    this.popUpManager
+      .showPopUpGeneric(
+        this.translate.instant("ptd.enviar_a_docente"),
+        this.translate.instant("ptd.pregunta_enviar_a_docente"),
+        MODALS.INFO,
+        false
+      )
+      .then(async (action) => {
+        if (action.value) {
+          this.popUpManager.showLoading();
+          try {
+            let data = {
+              preasignaciones: [{ Id: event["rowData"].id }],
+              "no-preasignaciones": [],
+              docente: false,
+            };
+
+            const resp: RespFormat = await firstValueFrom(
+              this.planDocenteMid.put("preasignacion/aprobar", data)
+            );
+            this.popUpManager.closeLoading();
+            if (checkResponse(resp)) {
+              this.popUpManager.showSuccessAlert(
+                this.translate.instant("ptd.aprobacion_preasignacion")
+              );
+            } else {
+              this.popUpManager.showErrorAlert(
+                this.translate.instant("ptd.error_aprobacion_preasignacion")
+              );
+            }
+            await this.loadPreasignaciones();
+          } catch (err: any) {
+            this.popUpManager.closeLoading();
+            console.warn(err);
+            this.popUpManager.showErrorToast(
+              this.translate.instant("ptd.error_aprobacion_preasignacion")
+            );
+          }
+        }
+      });
+  }
+
   accionEditar(event: any) {
     if (!this.permisos['tabla_coordinador']) {
       return this.popUpManager.showErrorToast(
@@ -619,7 +676,7 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
         MODALS.QUESTION,
         false
       )
-      .then((action) => {
+      .then(async (action) => {
         if (action.value) {
           const preasignacionesSeleccionadas = this.dataSource.data.filter((preasignacion: any) =>
             !!preasignacion?.aprobacion_docente?.seleccionado
@@ -708,7 +765,7 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
             } else {
               this.dataSource.data = [];
               this.popUpManager.showErrorAlert(
-                this.translate.instant("ptd.error_no_found_preasignaciones")
+                this.translate.instant("ptd.error_aprobacion_preasignacion")
               );
             }
             this.attachPaginatorAndSort();
@@ -717,7 +774,7 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
             this.hasAttemptedToLoad = true;
             this.dataSource.data = [];
             this.popUpManager.showErrorToast(
-              this.translate.instant("ptd.error_no_found_preasignaciones")
+              this.translate.instant("ptd.error_aprobacion_preasignacion")
             );
             this.attachPaginatorAndSort();
           },
@@ -823,7 +880,7 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
     }
   }
 
-  selectPeriodo(periodo: any) {
+  async selectPeriodo(periodo: any) {
     this.periodo = periodo.value;
     this.dataSource.data = [];
     this.dataSource.filter = '';
@@ -834,7 +891,15 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
         this.popUpManager.showErrorToast("El periodo seleccionado no se encuentra en el rango de fechas.");
         return;
       }
-      this.loadPreasignaciones();
+      this.popUpManager.showLoading();
+      try {
+        await this.loadPreasignaciones();
+      } catch (err) {
+        console.warn(err);
+        this.popUpManager.showErrorToast(this.translate.instant("ERROR.persiste_error_comunique_OAS"));
+      } finally {
+        this.popUpManager.closeLoading();
+      }
     }
   }
 

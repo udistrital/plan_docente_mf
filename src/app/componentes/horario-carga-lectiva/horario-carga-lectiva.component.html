@@ -33,7 +33,10 @@
         </mat-option>
       </mat-select>
     </mat-form-field>
-    <mat-form-field class="form-col1 form-field" *ngIf="isDocente">
+    <mat-form-field
+      class="form-col1 form-field"
+      *ngIf="mostrarSelectorActividadesNoLectivas"
+    >
       <mat-label>{{ "ptd.select_actividad" | translate }}:</mat-label>
       <mat-select [(ngModel)]="actividadSelected">
         <mat-option>--{{ "GLOBAL.seleccionar" | translate }}--</mat-option>
@@ -45,6 +48,7 @@
   </div>
 
   <button
+    *ngIf="!isDocente || mostrarSelectorActividadesNoLectivas"
     mat-flat-button
     class="form-field"
     color="accent"

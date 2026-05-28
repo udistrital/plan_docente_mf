@@ -1201,6 +1201,7 @@
     "gen_rep_total": "Generar reporte de totales",
     "gest_consolidados": "Gestionar consolidados",
     "list_consolidados": "Lista Consolidados",
+    "no_hay_consolidados": "No se encontraron consolidados para el proyecto y periodo seleccionado.",
     "new_consolidado": "Nuevo Consolidado",
     "diligenciar_consolidado": "Diligenciar Consolidado",
     "respuesta_decanatura": "Respuesta Decanatura",
