@@ -21,7 +21,7 @@ import { TercerosService } from 'src/app/services/terceros.service';
 import { MatDialog, MatDialogConfig } from '@angular/material/dialog';
 import { DialogoFirmaPtdComponent } from 'src/app/dialog-components/dialogo-firma-ptd/dialogo-firma-ptd.component';
 import { DialogPreviewFileComponent } from 'src/app/dialog-components/dialog-preview-file/dialog-preview-file.component';
-import { firstValueFrom } from 'rxjs';
+import { firstValueFrom } from 'rxjs/internal/firstValueFrom';
 
 @Component({
     selector: 'app-verificar-ptd',
@@ -85,14 +85,20 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
     this.formVerificar = this.builder.group({});
   }
 
-  ngOnInit() {
-    this.cargarEventoPTD();
-    this.userService.getUserRoles().then(roles => {
+  async ngOnInit() {
+    this.popUpManager.showLoading();
+    try {
+      await this.cargarEventoPTD();
+      const roles = await this.userService.getUserRoles();
       this.roles = roles;
       this.isCoordinator = _head(_intersection(roles, this.rolesCoord));
-    });
-    this.loadSelects();
-    this.buildForms();
+      await this.loadSelects();
+      this.buildForms();
+    } catch (err) {
+      this.popUpManager.showErrorAlert(this.translate.instant("ERROR.persiste_error_comunique_OAS"));
+    } finally {
+      this.popUpManager.closeLoading();
+    }
   }
 
   ngAfterViewInit() {
@@ -100,26 +106,35 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
     this.dataSource.sort = this.sort;
   }
 
-  cargarEventoPTD() {
-    this.sgaPlanTrabajoDocenteMidService.get("calendario/eventos").subscribe({
-      next: (resp: any) => {
-        if (checkContent(resp)) {
-          const eventos = Array.isArray(resp.Data) ? resp.Data : [];
-          const evento = eventos.find((e: any) => e.Descripcion === "PLANES DE TRABAJO DOCENTES");
-          if (evento) {
-            this.codigoEventoPTD = evento.CodigoEvento;
-            this.cargarCalendarioEventos().then(eventosCalendario => {
-              this.calendarEventosPTD = eventosCalendario;
-              this.resolverProyectosDesdeCalendario();
-            }).catch(err => console.warn(err));
-          }
+  async cargarEventoPTD(): Promise<void> {
+      const resp: any = await firstValueFrom(
+        this.sgaPlanTrabajoDocenteMidService.get("calendario/eventos")
+      );
+  
+      if (checkContent(resp)) {
+  
+        const eventos = Array.isArray(resp.Data)
+          ? resp.Data
+          : [];
+  
+        const evento = eventos.find(
+          (e: any) =>
+            e.Descripcion === "PLANES DE TRABAJO DOCENTES"
+        );
+  
+        if (evento) {
+  
+          this.codigoEventoPTD = evento.CodigoEvento;
+  
+          const eventosCalendario =
+            await this.cargarCalendarioEventos();
+  
+          this.calendarEventosPTD = eventosCalendario;
+  
+          this.resolverProyectosDesdeCalendario();
         }
-      },
-      error: (err: any) => {
-        console.warn("Error obteniendo calendario/eventos:", err);
       }
-    });
-  }
+    }
 
   resolverProyectosDesdeCalendario() {
     if (!this.calendarEventosPTD || this.calendarEventosPTD.length === 0) return;
@@ -414,7 +429,10 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
   }
 
   accionGestion(event: any) {
-    this.cargarPlan(event.rowData);
+    this.popUpManager.showLoading();
+    this.cargarPlan(event.rowData).catch(() => {
+      this.popUpManager.closeLoading();
+    });
   }
 
   loadPeriodo(): Promise<Periodo[]> {
@@ -472,7 +490,7 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
 
   async loadSelects() {
     try {
-      let promesas = [];
+      let promesas: Promise<void>[] = [];
       promesas.push(this.loadPeriodo().then(periodos => {
         this.periodos.opciones = periodos;
         this._todosLosPeriodos = [...periodos];
@@ -481,6 +499,7 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
         this.estadosPlan.opciones = estadosPlan;
         this.estadosPlan.opcionesfiltradas = this.estadosPlan.opciones.filter(estado => (estado.codigo_abreviacion == "APR") || (estado.codigo_abreviacion == "N_APR"));
       }));
+      await Promise.all(promesas);
     } catch (error) {
       console.warn(error);
       this.popUpManager.showPopUpGeneric(this.translate.instant('ERROR.titulo_generico'),
@@ -613,80 +632,74 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
     }
   }
 
-  cargarPlan(plan: any) {
-    this.sgaPlanTrabajoDocenteMidService.get(`plan?docente=${plan.tercero_id}&vigencia=${this.periodos.select.Id}&vinculacion=${plan.vinculacion_id}`).subscribe(
-      (resp) => {
-        this.dataDocente = {
-          Nombre: plan.nombre,
-          Documento: plan.identificacion,
-          Periodo: plan.periodo_academico,
-          docente_id: plan.tercero_id,
-          tipo_vinculacion_id: plan.vinculacion_id
-        };
-        this.formDocente.patchValue({
-          Nombre: this.dataDocente.Nombre,
-          Documento: this.dataDocente.Documento,
-          Periodo: this.dataDocente.Periodo,
-        })
-        this.infoPlan = resp.Data;
-        
-        this.formVerificar.patchValue({
-          Rol: this.isCoordinator,
-        })
+  async cargarPlan(plan: any) {
+    try {
+      const resp: any = await firstValueFrom(
+        this.sgaPlanTrabajoDocenteMidService.get(`plan?docente=${plan.tercero_id}&vigencia=${this.periodos.select.Id}&vinculacion=${plan.vinculacion_id}`)
+      );
+      this.dataDocente = {
+        Nombre: plan.nombre,
+        Documento: plan.identificacion,
+        Periodo: plan.periodo_academico,
+        docente_id: plan.tercero_id,
+        tipo_vinculacion_id: plan.vinculacion_id
+      };
+      this.formDocente.patchValue({
+        Nombre: this.dataDocente.Nombre,
+        Documento: this.dataDocente.Documento,
+        Periodo: this.dataDocente.Periodo,
+      })
+      this.infoPlan = resp.Data;
+      
+      this.formVerificar.patchValue({
+        Rol: this.isCoordinator,
+      })
 
-        this.planTrabajoDocenteService.get('plan_docente/'+plan.id).subscribe(resPlan => {
-          this.planDocenteEstadoGet = resPlan.Data;
-          if (resPlan.Data.respuesta && resPlan.Data.respuesta != "") {
-            const jsonResp = JSON.parse(resPlan.Data.respuesta);
-            const terceroId = jsonResp.responsable_id;
-            if (terceroId) {
-              const estadoPlan = this.estadosPlan.opciones.find(estado => estado._id === resPlan.Data.estado_plan_id);
-              this.editVerif = (estadoPlan?.codigo_abreviacion == "APR") || false;
-              this.formVerificar.patchValue({
-                DeAcuerdo: jsonResp.concertado,
-                Observaciones: jsonResp.observacion,
-                EstadoAprobado: estadoPlan,
-              })
-              this.getInfoResponsable(terceroId);
-            } else {
-              this.userService.getPersonaId().then((terceroId) => {
-                this.getInfoResponsable(terceroId);
-              }).catch(() => {
-                this.popUpManager.showPopUpGeneric(this.translate.instant('ERROR.titulo_generico'), this.translate.instant('ERROR.persiste_error_comunique_OAS'), MODALS.ERROR, false)
-              });
-            }
-          } else {
-            this.userService.getPersonaId().then((terceroId) => {
-              this.getInfoResponsable(terceroId);
-            }).catch(() => {
-              this.popUpManager.showPopUpGeneric(this.translate.instant('ERROR.titulo_generico'), this.translate.instant('ERROR.persiste_error_comunique_OAS'), MODALS.ERROR, false)
-            });
-          }
-        }, err => {
-          console.warn(err);
-          this.popUpManager.showPopUpGeneric(this.translate.instant('ERROR.titulo_generico'), this.translate.instant('ERROR.persiste_error_comunique_OAS'), MODALS.ERROR, false)
-        });
-
-        this.vista = VIEWS.FORM;
-      }, (err) => {
-        console.warn(err);
-        this.popUpManager.showPopUpGeneric(this.translate.instant('ERROR.titulo_generico'), this.translate.instant('ERROR.persiste_error_comunique_OAS'), MODALS.ERROR, false)
+      const resPlan: any = await firstValueFrom(
+        this.planTrabajoDocenteService.get('plan_docente/'+plan.id)
+      );
+      this.planDocenteEstadoGet = resPlan.Data;
+      if (resPlan.Data.respuesta && resPlan.Data.respuesta != "") {
+        const jsonResp = JSON.parse(resPlan.Data.respuesta);
+        const terceroId = jsonResp.responsable_id;
+        if (terceroId) {
+          const estadoPlan = this.estadosPlan.opciones.find(estado => estado._id === resPlan.Data.estado_plan_id);
+          this.editVerif = (estadoPlan?.codigo_abreviacion == "APR") || false;
+          this.formVerificar.patchValue({
+            DeAcuerdo: jsonResp.concertado,
+            Observaciones: jsonResp.observacion,
+            EstadoAprobado: estadoPlan,
+          })
+          await this.getInfoResponsable(terceroId);
+        } else {
+          const terceroId = await this.userService.getPersonaId();
+          await this.getInfoResponsable(terceroId);
+        }
+      } else {
+        const terceroId = await this.userService.getPersonaId();
+        await this.getInfoResponsable(terceroId);
       }
-    );
+      this.vista = VIEWS.FORM;
+      this.popUpManager.closeLoading();
+    } catch (err) {
+      this.popUpManager.closeLoading();
+      console.warn(err);
+      this.popUpManager.showPopUpGeneric(this.translate.instant('ERROR.titulo_generico'), this.translate.instant('ERROR.persiste_error_comunique_OAS'), MODALS.ERROR, false)
+    }
   }
 
-  getInfoResponsable(terceroId: number) {
-    this.tercerosService.get('tercero/' + terceroId).subscribe({
-      next: (resTerc) => {
-        this.formVerificar.patchValue({
-          QuienResponde: resTerc.NombreCompleto,
-        })
-      },
-      error: (err) => {
-        console.warn(err);
-        this.popUpManager.showPopUpGeneric(this.translate.instant('ERROR.titulo_generico'), this.translate.instant('ERROR.persiste_error_comunique_OAS'), MODALS.ERROR, false)
-      }
-    });
+  async getInfoResponsable(terceroId: number) {
+    try {
+      const resTerc: any = await firstValueFrom(
+        this.tercerosService.get('tercero/' + terceroId)
+      );
+      this.formVerificar.patchValue({
+        QuienResponde: resTerc.NombreCompleto,
+      })
+    } catch (err) {
+      console.warn(err);
+      throw new Error(this.translate.instant('GLOBAL.error'));
+    }
   }
 
   validarFormVerificar() {
