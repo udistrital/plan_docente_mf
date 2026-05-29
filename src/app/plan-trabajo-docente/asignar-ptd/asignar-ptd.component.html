@@ -196,6 +196,7 @@
           [dataDocente]="dataDocente"
           [detalleAsignacion]="detalleAsignacion"
           [periodosAnteriores]="periodosAnteriores"
+          [selectedView]="rolVista"
         ></asignar-ptd-multiple>
       </ng-container>
       <!-- PDT con asignación modular -->
@@ -207,6 +208,7 @@
               [detalleAsignacion]="detallesGeneral"
               [periodosAnteriores]="periodosAnteriores"
               [soloLectura]="true"
+              [selectedView]="rolVista"
             ></asignar-ptd-multiple>
           </mat-tab>
           <mat-tab label="{{ 'ptd.ptd_docente_principal' | translate }}">
@@ -215,6 +217,7 @@
               [detalleAsignacion]="detalleAsignacion"
               [periodosAnteriores]="periodosAnteriores"
               (OutDetalleChanged)="manageChangesInGeneralPTD($event)"
+              [selectedView]="rolVista"
             ></asignar-ptd-multiple>
           </mat-tab>
           <ng-container
@@ -231,6 +234,7 @@
                 [periodosAnteriores]="periodosAnteriores"
                 (OutDetalleChanged)="manageChangesInGeneralPTD($event)"
                 [soloLectura]="true"
+                [selectedView]="rolVista"
               ></asignar-ptd-multiple>
             </mat-tab>
           </ng-container>
@@ -242,6 +246,7 @@
                   [detalleAsignacion]="detallesGeneral"
                   [periodosAnteriores]="periodosAnteriores"
                   [soloLectura]="true"
+                  [selectedView]="rolVista"
                 ></asignar-ptd-multiple>
               </mat-tab>
               <mat-tab label="{{ 'ptd.seccion_tiempo' | translate }}">
@@ -250,6 +255,7 @@
                   [detalleAsignacion]="detallesGeneral"
                   [periodosAnteriores]="periodosAnteriores"
                   [soloLectura]="true"
+                  [selectedView]="rolVista"
                 ></asignar-ptd-multiple>
               </mat-tab>
             </mat-tab-group>

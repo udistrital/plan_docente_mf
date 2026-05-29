@@ -26,10 +26,10 @@ import { AcademicaJbpmService } from "src/app/services/academica-jbpm.service";
 import { validarHorasPlanDocentePorVinculacion } from "src/app/utils/ptd-hours";
 
 @Component({
-    selector: "app-asignar-ptd",
-    templateUrl: "./asignar-ptd.component.html",
-    styleUrls: ["./asignar-ptd.component.scss"],
-    standalone: false
+  selector: "app-asignar-ptd",
+  templateUrl: "./asignar-ptd.component.html",
+  styleUrls: ["./asignar-ptd.component.scss"],
+  standalone: false
 })
 export class AsignarPtdComponent implements OnInit, AfterViewInit {
   readonly VIEWS = VIEWS;
@@ -39,6 +39,7 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
   vistaActiva: 'docente' | 'coordinador' = 'docente';
 
   roles: string[] = [];
+  rolVista: string = '';
   canEdit: Symbol = ACTIONS.VIEW;
 
   opcionesPermisos: string[] = [
@@ -106,15 +107,22 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
     this.dataSource = new MatTableDataSource();
   }
 
-  ngOnInit() {
-    this.cargarEventoPTD();
-    this.userService.getUserRoles().then(async (roles) => {
+  async ngOnInit() {
+    this.popUpManager.showLoading();
+    try {
+      await this.cargarEventoPTD();
+      // Espera roles
+      const roles = await this.userService.getUserRoles();
       this.roles = roles;
       // Construcción observables permisos
       const observables: { [key: string]: Observable<boolean> } = {};
       this.opcionesPermisos.forEach(opcion => {
         observables[opcion] =
-          this.permisosUtils.tienePermiso(roles, opcion);
+          this.permisosUtils.tienePermiso(
+            roles,
+            opcion
+          );
+
       });
       const resultados = await firstValueFrom(forkJoin(observables));
       this.permisos = resultados;
@@ -125,49 +133,56 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
       } else {
         this.vistaActiva = 'docente';
       }
-      
       // Cargar proyectos del coordinador si tiene permiso
       if (this.permisos['enviar_coordinador']) {
-        try {
-          this.proyectosCoordinador = await this.obtenerProyectosCoordinador();
-        } catch (err) {
-          console.warn("No fue posible obtener proyectos del coordinador", err);
-          this.proyectosCoordinador = [];
-        }
+        this.proyectosCoordinador =
+          await this.obtenerProyectosCoordinador();
       }
-    });
-    this.cargarPeriodo()
-      .then((resp) => (this.periodos = resp))
-      .catch((err) => {
-        this.popUpManager.showErrorToast(
-          this.translate.instant("GLOBAL.sin_periodo")
-        );
-        this.periodos = [];
-      });
-    this.cargarEstadosPlan().then((estados) => {
-      this.estadosPlan = estados;
-    });
+      // Paralelo porque son independientes
+      const [
+        periodos,
+        estadosPlan
+      ] = await Promise.all([
+        this.cargarPeriodo(),
+        this.cargarEstadosPlan()
+        
+      ]);
+      this.periodos = periodos;
+      this.estadosPlan = estadosPlan;
+      this.popUpManager.closeLoading();
+    } catch (err) {
+      this.popUpManager.showErrorAlert(this.translate.instant("ERROR.persiste_error_comunique_OAS"));
+    }
   }
 
-  cargarEventoPTD() {
-    this.sgaPlanTrabajoDocenteMidService.get("calendario/eventos").subscribe({
-      next: (resp: any) => {
-        if (checkContent(resp)) {
-          const eventos = Array.isArray(resp.Data) ? resp.Data : [];
-          const evento = eventos.find((e: any) => e.Descripcion === "PLANES DE TRABAJO DOCENTES");
-          if (evento) {
-            this.codigoEventoPTD = evento.CodigoEvento;
-            this.cargarCalendarioEventos().then(eventosCalendario => {
-              this.calendarEventosPTD = eventosCalendario;
-              this.resolverProyectosDesdeCalendario();
-            }).catch(err => console.warn(err));
-          }
-        }
-      },
-      error: (err: any) => {
-        console.warn("Error obteniendo calendario/eventos:", err);
+  async cargarEventoPTD(): Promise<void> {
+    const resp: any = await firstValueFrom(
+      this.sgaPlanTrabajoDocenteMidService.get("calendario/eventos")
+    );
+
+    if (checkContent(resp)) {
+
+      const eventos = Array.isArray(resp.Data)
+        ? resp.Data
+        : [];
+
+      const evento = eventos.find(
+        (e: any) =>
+          e.Descripcion === "PLANES DE TRABAJO DOCENTES"
+      );
+
+      if (evento) {
+
+        this.codigoEventoPTD = evento.CodigoEvento;
+
+        const eventosCalendario =
+          await this.cargarCalendarioEventos();
+
+        this.calendarEventosPTD = eventosCalendario;
+
+        this.resolverProyectosDesdeCalendario();
       }
-    });
+    }
   }
 
   cargarCalendarioEventos(): Promise<any[]> {
@@ -300,36 +315,43 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
     }
   }
 
-  accionGestion(event: any) {
+  async accionGestion(event: any) {
+    if(this.vistaActiva == 'coordinador'){
+      this.rolVista = ROLES.COORDINADOR;
+    }else if(this.vistaActiva == 'docente'){
+      this.rolVista = ROLES.DOCENTE;
+    }
     if (event.rowData.gestion.type == "editar") {
       this.canEdit = ACTIONS.EDIT;
     } else {
       this.canEdit = ACTIONS.VIEW;
     }
-    this.sgaPlanTrabajoDocenteMidService
-      .get(
-        `plan?docente=${event.rowData.docente_id}&vigencia=${event.rowData.periodo_id}&vinculacion=${event.rowData.tipo_vinculacion_id}`
-      )
-      .subscribe(
-        (res: any) => {
-          this.detalleAsignacion = res.Data;
-          this.dataDocente = {
-            Nombre: event.rowData.docente,
-            NombreCorto:
-              res.Data.docente.nombre1 && res.Data.docente.apellido1
-                ? res.Data.docente.nombre1 + " " + res.Data.docente.apellido1
-                : res.Data.docente.nombre,
-            Documento: event.rowData.identificacion,
-            Periodo: event.rowData.periodo_academico,
-            TipoVinculacion: event.rowData.tipo_vinculacion,
-            docente_id: event.rowData.docente_id,
-            periodo_id: event.rowData.periodo_id,
-            tipo_vinculacion_id: event.rowData.tipo_vinculacion_id,
-          };
-          this.checknloadRelatedPTD(
-            this.detalleAsignacion.planes_relacionados_query
-          );
-          this.vista = VIEWS.FORM;
+    this.popUpManager.showLoading();
+    try {
+      const res: any = await firstValueFrom(
+        this.sgaPlanTrabajoDocenteMidService.get(
+          `plan?docente=${event.rowData.docente_id}&vigencia=${event.rowData.periodo_id}&vinculacion=${event.rowData.tipo_vinculacion_id}`
+        )
+      );
+      this.popUpManager.closeLoading();
+      this.detalleAsignacion = res.Data;
+      this.dataDocente = {
+        Nombre: event.rowData.docente,
+        NombreCorto:
+          res.Data.docente.nombre1 && res.Data.docente.apellido1
+            ? res.Data.docente.nombre1 + " " + res.Data.docente.apellido1
+            : res.Data.docente.nombre,
+        Documento: event.rowData.identificacion,
+        Periodo: event.rowData.periodo_academico,
+        TipoVinculacion: event.rowData.tipo_vinculacion,
+        docente_id: event.rowData.docente_id,
+        periodo_id: event.rowData.periodo_id,
+        tipo_vinculacion_id: event.rowData.tipo_vinculacion_id,
+      };
+      this.checknloadRelatedPTD(
+        this.detalleAsignacion.planes_relacionados_query
+      );
+      this.vista = VIEWS.FORM;
           if (this.permisos['ver_gestion']) {
             const modales = [];
             if (this.canEdit == ACTIONS.VIEW) {
@@ -343,11 +365,11 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
             );
             //this.popUpManager.showManyPopUp(this.translate.instant('notas.docente'), modales, MODALS.INFO)
           }
-        },
-        (error) => {
-          console.warn("error:", error);
-        }
-      );
+    } catch (error) {
+      this.popUpManager.closeLoading();
+      console.warn("error:", error);
+      this.popUpManager.showErrorToast(this.translate.instant("GLOBAL.error_carga"));
+    }
   }
 
   accionEnviar(event: any) {
@@ -379,13 +401,25 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
         MODALS.WARNING,
         false
       )
-      .then((action) => {
+      .then(async (action) => {
         if (action.value) {
-          this.enviarSegunRol(
-            coordinador,
-            event.rowData.plan_docente_id,
-            event.rowData
-          );
+          this.popUpManager.showLoading();
+          try {
+            await this.enviarSegunRol(
+              coordinador,
+              event.rowData.plan_docente_id,
+              event.rowData
+            );
+            this.popUpManager.closeLoading();
+            this.popUpManager.showSuccessAlert(
+              this.translate.instant("ptd.plan_enviado_ok")
+            );
+          } catch (err) {
+            this.popUpManager.closeLoading();
+            console.warn('Error en enviarSegunRol desde accionEnviar:', err);
+            const mensajeError = (err as any)?.message || this.translate.instant("ptd.error_enviar_plan");
+            this.popUpManager.showErrorAlert(mensajeError);
+          }
         }
       });
   }
@@ -749,7 +783,7 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
     }
   }
 
-  selectPeriodo(periodo: MatSelectChange) {
+  async selectPeriodo(periodo: MatSelectChange) {
     this.periodo = periodo.value;
     this.dataSource = new MatTableDataSource();
     this.preasignacionesPeriodo = [];
@@ -763,7 +797,15 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
         this.popUpManager.showErrorToast("El periodo seleccionado no se encuentra en el rango de fechas.");
         return;
       }
-      this.loadAsignaciones();
+      this.popUpManager.showLoading();
+      try {
+        await this.loadAsignaciones();
+      } catch (err) {
+        console.warn('Error en loadAsignaciones desde selectPeriodo:', err);
+        this.popUpManager.showErrorToast(this.translate.instant("ERROR.persiste_error_comunique_OAS"));
+      } finally {
+        this.popUpManager.closeLoading();
+      }
     }
   }
 
@@ -786,7 +828,7 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
     });
   }
 
-  enviarSegunRol(coordinador: boolean, id_plan: string, rowData?: any) {
+  async enviarSegunRol(coordinador: boolean, id_plan: string, rowData?: any) {
     const cod_abrev = coordinador ? "ENV_COO" : "ENV_DOC";
     this.errorCargaAutomaticaMostrado = false;
     const estado = this.estadosPlan.find(
@@ -837,57 +879,63 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
             );
             return;
           }
-          if (coordinador) {
-            const cargaAutomaticaOk = await this.persistirCargaAutomaticaDesdePreasignacion(
-              rowData,
-              id_plan,
-              res_g?.Data
-            );
-            if (!cargaAutomaticaOk) {
-              if (!this.errorCargaAutomaticaMostrado) {
-                this.popUpManager.showErrorAlert(
-                  this.translate.instant("ptd.error_enviar_plan")
-                );
-              }
-              return;
+          else if (MEDIO_TIEMPO.includes(codigoAbreviacion ?? '')) {
+            if (totalHoras !== 20) {
+              throw new Error(`El total de horas debe ser 20 para medio tiempo, pero el plan tiene ${totalHoras}.`);
             }
           }
+        }
+      }
 
-          if (!coordinador) {
-            let respuestaJson = res_g.Data.respuesta
-              ? JSON.parse(res_g.Data.respuesta)
-              : {};
-            respuestaJson["DocenteAprueba"] = new Date().toLocaleString(
-              "es-CO",
-              { timeZone: "America/Bogota" }
+      if (coordinador) {
+        const cargaAutomaticaOk = await this.persistirCargaAutomaticaDesdePreasignacion(
+          rowData,
+          id_plan,
+          res_g?.Data
+        );
+        if (!cargaAutomaticaOk) {
+          if (!this.errorCargaAutomaticaMostrado) {
+            this.popUpManager.showErrorAlert(
+              this.translate.instant("ptd.error_enviar_plan")
             );
-            res_g.Data.respuesta = JSON.stringify(respuestaJson);
           }
-          res_g.Data.estado_plan_id = estado._id;
-          this.planTrabajoDocenteService
-            .put("plan_docente/" + id_plan, res_g.Data)
-            .subscribe({
-              next: async (res_p) => {
-                this.popUpManager.showSuccessAlert(
-                  this.translate.instant("ptd.plan_enviado_ok")
-                );
-                this.loadAsignaciones();
-              },
-              error: (err_p) => {
-                this.popUpManager.showErrorAlert(
-                  this.translate.instant("ptd.error_enviar_plan")
-                );
-                console.warn("putfail", err_p);
-              },
-            });
-        },
-        error: (err_g) => {
-          this.popUpManager.showErrorAlert(
-            this.translate.instant("ptd.error_enviar_plan")
+          throw new Error('Error al persistir carga automática');
+        }
+      }
+
+      if (!coordinador) {
+        let respuestaJson = res_g.Data.respuesta
+          ? JSON.parse(res_g.Data.respuesta)
+          : {};
+        respuestaJson["DocenteAprueba"] = new Date().toLocaleString(
+          "es-CO",
+          { timeZone: "America/Bogota" }
+        );
+        res_g.Data.respuesta = JSON.stringify(respuestaJson);
+      }
+      res_g.Data.estado_plan_id = estado._id;
+
+      try {
+        const res_p: any = await firstValueFrom(
+          this.planTrabajoDocenteService.put("plan_docente/" + id_plan, res_g.Data)
+        );
+
+        if (coordinador) {
+          const preasignacionesActualizadas = await this.marcarPreasignacionesComoAprobadasPorCoordinacion(
+            rowData
           );
-          console.warn("getfail", err_g);
-        },
-      });
+
+          if (!preasignacionesActualizadas) {
+            throw new Error(this.translate.instant("ptd.error_enviar_plan"));
+          }
+        }
+        await this.loadAsignaciones();
+      } catch (err_p) {
+        throw err_p;
+      }
+
+    } catch (err_g) {
+      throw err_g;
     }
   }
 
@@ -931,13 +979,13 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
             ef => (ef.id || ef._id) === (e.id || e._id)
           )
         );
-        
+
         if (espaciosFueraProyecto.length > 0) {
           const nombresFuera = espaciosFueraProyecto
             .map(e => `• ${e.espacio_academico || e.nombre}`)
             .join("<br>");
-          
-          await this.popUpManager.showPopUpGeneric(
+
+          this.popUpManager.showPopUpGeneric(
             this.translate.instant("ptd.carga_automatica_parcial"),
             `${this.translate.instant("ptd.espacios_fuera_proyecto_coordinador")}<br><br>${nombresFuera}`,
             MODALS.INFO,
@@ -1382,9 +1430,9 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
     const nombreMateria = (carga: any): string => {
       const nombre = String(
         carga?.espacio_academico_nombre ||
-          carga?.espacio_academico ||
-          carga?.nombre ||
-          ""
+        carga?.espacio_academico ||
+        carga?.nombre ||
+        ""
       ).trim();
 
       if (nombre) {
@@ -1487,9 +1535,9 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
         bloque: obtenerBloque(carga),
       }))
       .filter((registro: any) => !!registro.bloque)) as Array<{
-      nombre: string;
-      bloque: { dia: number; inicio: number; fin: number };
-    }>;
+        nombre: string;
+        bloque: { dia: number; inicio: number; fin: number };
+      }>;
 
     const registrosActuales = ((cargaActual || [])
       .map((carga: any) => ({
@@ -1497,9 +1545,9 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
         bloque: obtenerBloque(carga),
       }))
       .filter((registro: any) => !!registro.bloque)) as Array<{
-      nombre: string;
-      bloque: { dia: number; inicio: number; fin: number };
-    }>;
+        nombre: string;
+        bloque: { dia: number; inicio: number; fin: number };
+      }>;
 
     registrosNuevos.forEach((registroNuevo: any, idxNuevo: number) => {
       registrosActuales.forEach((registroActual: any) => {
