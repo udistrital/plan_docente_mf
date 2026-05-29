@@ -837,21 +837,22 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
     if (estado) {
       this.planTrabajoDocenteService.get("plan_docente/" + id_plan).subscribe({
         next: async (res_g) => {
-          let planToValidate: any = null;
           try {
-            const planResp: any = await firstValueFrom(
-              this.sgaPlanTrabajoDocenteMidService.get(
-                `plan?docente=${rowData?.docente_id}&vigencia=${rowData?.periodo_id}&vinculacion=${rowData?.tipo_vinculacion_id}`
-              )
-            );
-            planToValidate = planResp?.Data;
-          } catch (error) {
-            console.warn('No fue posible cargar el plan para validación de horas', error);
-            this.popUpManager.showErrorAlert(
-              this.translate.instant('ptd.error_validacion_horas_cargar_plan')
-            );
-            return;
-          }
+            let planToValidate: any = null;
+            try {
+              const planResp: any = await firstValueFrom(
+                this.sgaPlanTrabajoDocenteMidService.get(
+                  `plan?docente=${rowData?.docente_id}&vigencia=${rowData?.periodo_id}&vinculacion=${rowData?.tipo_vinculacion_id}`
+                )
+              );
+              planToValidate = planResp?.Data;
+            } catch (error) {
+              console.warn('No fue posible cargar el plan para validación de horas', error);
+              this.popUpManager.showErrorAlert(
+                this.translate.instant('ptd.error_validacion_horas_cargar_plan')
+              );
+              return;
+            }
 
           if (!planToValidate) {
             this.popUpManager.showErrorAlert(
@@ -879,13 +880,6 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
             );
             return;
           }
-          else if (MEDIO_TIEMPO.includes(codigoAbreviacion ?? '')) {
-            if (totalHoras !== 20) {
-              throw new Error(`El total de horas debe ser 20 para medio tiempo, pero el plan tiene ${totalHoras}.`);
-            }
-          }
-        }
-      }
 
       if (coordinador) {
         const cargaAutomaticaOk = await this.persistirCargaAutomaticaDesdePreasignacion(
@@ -934,8 +928,14 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
         throw err_p;
       }
 
-    } catch (err_g) {
-      throw err_g;
+          } catch (err_g) {
+            throw err_g;
+          }
+        },
+        error: (err_g) => {
+          throw err_g;
+        },
+      });
     }
   }
 
