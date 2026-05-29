@@ -142,11 +142,12 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
         periodos,
         estadosPlan
       ] = await Promise.all([
-
         this.cargarPeriodo(),
         this.cargarEstadosPlan()
-
+        
       ]);
+      this.periodos = periodos;
+      this.estadosPlan = estadosPlan;
       this.popUpManager.closeLoading();
     } catch (err) {
       this.popUpManager.showErrorAlert(this.translate.instant("ERROR.persiste_error_comunique_OAS"));
