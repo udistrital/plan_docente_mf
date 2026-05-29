@@ -23,6 +23,7 @@ import { firstValueFrom } from "rxjs/internal/firstValueFrom";
 import { Observable } from "rxjs/internal/Observable";
 import { PermisosUtils } from "src/app/utils/role-permissions";
 import { AcademicaJbpmService } from "src/app/services/academica-jbpm.service";
+import { validarHorasPlanDocentePorVinculacion } from "src/app/utils/ptd-hours";
 
 @Component({
     selector: "app-asignar-ptd",
@@ -786,14 +787,6 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
   }
 
   enviarSegunRol(coordinador: boolean, id_plan: string, rowData?: any) {
-    const TIEMPO_COMPLETO = [
-      'DCTC',
-      'TCO',
-    ];
-    const MEDIO_TIEMPO = [
-      'DCMT',
-      'MTO',
-    ];
     const cod_abrev = coordinador ? "ENV_COO" : "ENV_DOC";
     this.errorCargaAutomaticaMostrado = false;
     const estado = this.estadosPlan.find(
@@ -802,84 +795,47 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
     if (estado) {
       this.planTrabajoDocenteService.get("plan_docente/" + id_plan).subscribe({
         next: async (res_g) => {
-          // Validaciones solo cuando lo envía el docente
-          if (!coordinador) {
-            let planToValidate: any = null;
-            try {
-              const planResp: any = await firstValueFrom(
-                this.sgaPlanTrabajoDocenteMidService.get(
-                  `plan?docente=${rowData?.docente_id}&vigencia=${rowData?.periodo_id}&vinculacion=${rowData?.tipo_vinculacion_id}`
-                )
-              );
-              planToValidate = planResp?.Data;
-            } catch (error) {
-              console.warn('No fue posible cargar el plan para validación de horas', error);
-              this.popUpManager.showErrorAlert('No fue posible cargar el plan para validar las horas.');
-              return;
-            }
+          let planToValidate: any = null;
+          try {
+            const planResp: any = await firstValueFrom(
+              this.sgaPlanTrabajoDocenteMidService.get(
+                `plan?docente=${rowData?.docente_id}&vigencia=${rowData?.periodo_id}&vinculacion=${rowData?.tipo_vinculacion_id}`
+              )
+            );
+            planToValidate = planResp?.Data;
+          } catch (error) {
+            console.warn('No fue posible cargar el plan para validación de horas', error);
+            this.popUpManager.showErrorAlert(
+              this.translate.instant('ptd.error_validacion_horas_cargar_plan')
+            );
+            return;
+          }
 
-            if (!planToValidate) {
-              this.popUpManager.showErrorAlert('No se encontró el plan para validación de horas.');
-              return;
-            }
+          if (!planToValidate) {
+            this.popUpManager.showErrorAlert(
+              this.translate.instant('ptd.error_validacion_horas_plan_no_encontrado')
+            );
+            return;
+          }
 
-            const vinculacionId = String(planToValidate.tipo_vinculacion?.[0]?.id || planToValidate.tipo_vinculacion || '').trim();
-            const cargaItems = Array.isArray(planToValidate.carga?.[0]) ? planToValidate.carga[0] : [];
-            const totalHoras = cargaItems.reduce((sum: number, item: any) => {
-              const horas = Number(item?.horario?.horas);
-              return sum + (Number.isNaN(horas) ? 0 : horas);
-            }, 0);
-
-            if (!vinculacionId) {
-              this.popUpManager.showErrorAlert('No se encontró el tipo de vinculación para validación de horas.');
-              return;
-            }
-            let codigoAbreviacion: string | null = null;
-            try {
-              const parametroResp: any = await firstValueFrom(
-                this.parametrosService.get(
-                  `parametro?query=Id:${vinculacionId}&fields=CodigoAbreviacion`
-                )
-              );
-              codigoAbreviacion =
-                parametroResp?.Data?.[0]?.CodigoAbreviacion || null;
-
-            } catch (error) {
-              console.warn('No fue posible cargar el parámetro', error);
-              this.popUpManager.showErrorAlert(
-                'No fue posible consultar el tipo de vinculación.'
-              );
-              return;
-            }
-            const VINCULACIONES_VALIDACION = [...TIEMPO_COMPLETO, ...MEDIO_TIEMPO];
-            if (!VINCULACIONES_VALIDACION.includes(codigoAbreviacion ?? '')) {
-              this.popUpManager.showErrorAlert(
-                'Tipo de vinculación no reconocido para validación de horas.'
-              );
-              return;
-            }
-            if (TIEMPO_COMPLETO.includes(codigoAbreviacion ?? '')) {
-              if (totalHoras !== 40) {
-                this.popUpManager.showErrorAlert(
-                  `El total de horas debe ser 40 para tiempo completo, pero el plan tiene ${totalHoras}.`
-                );
-                return;
-              }
-            } 
-            else if (MEDIO_TIEMPO.includes(codigoAbreviacion ?? '')) {
-              if (totalHoras !== 20) {
-                this.popUpManager.showErrorAlert(
-                  `El total de horas debe ser 20 para medio tiempo, pero el plan tiene ${totalHoras}.`
-                );
-                return;
-              }
-            } 
-            else {
-              this.popUpManager.showErrorAlert(
-                'Tipo de vinculación no reconocido para validación de horas.'
-              );
-              return;
-            }
+          const validacionHoras = validarHorasPlanDocentePorVinculacion(
+            planToValidate,
+            String(rowData?.tipo_vinculacion_id || "").trim()
+          );
+          if (!validacionHoras.codigoAbreviacion || validacionHoras.horasRequeridas === null) {
+            this.popUpManager.showErrorAlert(
+              this.translate.instant('ptd.error_validacion_horas_tipo_vinculacion')
+            );
+            return;
+          }
+          if (validacionHoras.totalHoras !== validacionHoras.horasRequeridas) {
+            this.popUpManager.showErrorAlert(
+              this.translate.instant('ptd.error_validacion_horas_total_plan', {
+                horasRequeridas: validacionHoras.horasRequeridas,
+                totalHoras: validacionHoras.totalHoras,
+              })
+            );
+            return;
           }
           if (coordinador) {
             const cargaAutomaticaOk = await this.persistirCargaAutomaticaDesdePreasignacion(

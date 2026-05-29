@@ -78,6 +78,8 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
   vistaActiva: 'docente' | 'coordinador' = 'docente';
   hasAttemptedToLoad: boolean = false;
   dialogConfig: MatDialogConfig;
+  private estadoPlanAprobadoId: string | null = null;
+  private estadoPlanAprobadoCargado = false;
 
   constructor(
     private userService: UserService,
@@ -484,6 +486,97 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
     }
   }
 
+  private async obtenerEstadoPlanAprobadoId(): Promise<string | null> {
+    if (this.estadoPlanAprobadoCargado) {
+      return this.estadoPlanAprobadoId;
+    }
+
+    try {
+      const estadosResp: any = await firstValueFrom(
+        this.planTrabajoDocenteService.get("estado_plan?query=codigo_abreviacion:APR&limit=1")
+      );
+
+      const estadoApr = Array.isArray(estadosResp?.Data) && estadosResp.Data.length > 0
+        ? estadosResp.Data[0]?._id
+        : null;
+
+      this.estadoPlanAprobadoId = estadoApr ? String(estadoApr) : null;
+    } catch (error) {
+      console.warn("No fue posible consultar el estado de plan aprobado", error);
+      this.estadoPlanAprobadoId = null;
+    }
+
+    this.estadoPlanAprobadoCargado = true;
+    return this.estadoPlanAprobadoId;
+  }
+
+  private extraerPlanDocenteId(preasignacion: any): string {
+    const id = String(preasignacion?.plan_docente?._id || "").trim();
+    return id || "";
+  }
+
+  private async resolverPlanDocenteId(preasignacion: any): Promise<string> {
+    const idDirecto = this.extraerPlanDocenteId(preasignacion);
+    if (idDirecto) {
+      return idDirecto;
+    }
+
+    const docenteId = String(preasignacion?.docente_id || "").trim();
+    const vigenciaId = String(preasignacion?.periodo_id || "").trim();
+    const vinculacionId = String(preasignacion?.tipo_vinculacion_id || "").trim();
+
+    if (!docenteId || !vigenciaId || !vinculacionId) {
+      return "";
+    }
+
+    try {
+      const planResp: any = await firstValueFrom(
+        this.planDocenteMid.get(
+          `plan?docente=${docenteId}&vigencia=${vigenciaId}&vinculacion=${vinculacionId}`
+        )
+      );
+
+      const dataPlan = planResp?.Data;
+      const seleccion = Number(dataPlan?.seleccion || 0);
+      const planDocente = Array.isArray(dataPlan?.plan_docente)
+        ? dataPlan.plan_docente[seleccion] ?? dataPlan.plan_docente[0]
+        : dataPlan?.plan_docente;
+
+      if (typeof planDocente === "string") {
+        return String(planDocente).trim();
+      }
+
+      return String(planDocente?._id || planDocente?.id || "").trim();
+    } catch (error) {
+      console.warn("No fue posible resolver el plan docente desde la preasignación", error);
+      return "";
+    }
+  }
+
+  private async esPtdAprobado(preasignacion: any): Promise<boolean> {
+    const planDocenteId = await this.resolverPlanDocenteId(preasignacion);
+    if (!planDocenteId) {
+      return false;
+    }
+
+    const estadoAprId = await this.obtenerEstadoPlanAprobadoId();
+    if (!estadoAprId) {
+      return false;
+    }
+
+    try {
+      const planResp: any = await firstValueFrom(
+        this.planTrabajoDocenteService.get("plan_docente/" + planDocenteId)
+      );
+
+      const estadoPlanId = String(planResp?.Data?.estado_plan_id || "").trim();
+      return estadoPlanId === estadoAprId;
+    } catch (error) {
+      console.warn("No fue posible consultar el estado del plan docente", error);
+      return false;
+    }
+  }
+
   accionEditar(event: any) {
     if (!this.permisos['tabla_coordinador']) {
       return this.popUpManager.showErrorToast(
@@ -491,34 +584,43 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
       );
     }
 
-    this.popUpManager
-      .showPopUpGeneric(
-        this.translate.instant("ptd.preasignacion"),
-        this.translate.instant("ptd.pregunta_editar"),
-        MODALS.INFO,
-        false
-      )
-      .then((action) => {
-        if (action.value) {
-          const preasignacion = event["rowData"];
-          this.dialogConfig.data = preasignacion;
-          const preasignacionDialog = this.dialog.open(
-            DialogoPreAsignacionPtdComponent,
-            this.dialogConfig
-          );
-          preasignacionDialog.afterClosed().subscribe((result) => {
-            if (result) {
-              this.resetearAprobacionProyecto(preasignacion).then(() => {
-                this.limpiarCargaPlanDePreasignacion(preasignacion).then(() => {
-                  this.loadPreasignaciones();
+    const preasignacion = event["rowData"];
+    this.esPtdAprobado(preasignacion).then((ptdAprobado) => {
+      if (ptdAprobado) {
+        this.popUpManager.showErrorAlert(
+          this.translate.instant("ptd.no_editar_borrar_ptd_aprobado")
+        );
+        return;
+      }
+
+      this.popUpManager
+        .showPopUpGeneric(
+          this.translate.instant("ptd.preasignacion"),
+          this.translate.instant("ptd.pregunta_editar"),
+          MODALS.INFO,
+          false
+        )
+        .then((action) => {
+          if (action.value) {
+            this.dialogConfig.data = preasignacion;
+            const preasignacionDialog = this.dialog.open(
+              DialogoPreAsignacionPtdComponent,
+              this.dialogConfig
+            );
+            preasignacionDialog.afterClosed().subscribe((result) => {
+              if (result) {
+                this.resetearAprobacionProyecto(preasignacion).then(() => {
+                  this.limpiarCargaPlanDePreasignacion(preasignacion).then(() => {
+                    this.loadPreasignaciones();
+                  });
                 });
-              });
-            } else {
-              this.loadPreasignaciones();
-            }
-          });
-        }
-      });
+              } else {
+                this.loadPreasignaciones();
+              }
+            });
+          }
+        });
+    });
   }
 
   preguntarBorradoPreAsignacion(event: any) {
@@ -528,23 +630,33 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
       );
     }
 
-    this.popUpManager
-      .showConfirmAlert(this.translate.instant("ptd.pregunta_eliminar"))
-      .then((action) => {
-        if (action.value) {
-          this.popUpManager
-            .showConfirmAlert(
-              this.translate.instant(
-                "ptd.eliminar_preasignacion_tiene_repetir_proceso_ptd"
+    const preasignacion = event.rowData;
+    this.esPtdAprobado(preasignacion).then((ptdAprobado) => {
+      if (ptdAprobado) {
+        this.popUpManager.showErrorAlert(
+          this.translate.instant("ptd.no_editar_borrar_ptd_aprobado")
+        );
+        return;
+      }
+
+      this.popUpManager
+        .showConfirmAlert(this.translate.instant("ptd.pregunta_eliminar"))
+        .then((action) => {
+          if (action.value) {
+            this.popUpManager
+              .showConfirmAlert(
+                this.translate.instant(
+                  "ptd.eliminar_preasignacion_tiene_repetir_proceso_ptd"
+                )
               )
-            )
-            .then((action) => {
-              if (action.value) {
-                this.eliminarPreAsignacion(event.rowData);
-              }
-            });
-        }
-      });
+              .then((action) => {
+                if (action.value) {
+                  this.eliminarPreAsignacion(preasignacion);
+                }
+              });
+          }
+        });
+    });
   }
 
   eliminarPreAsignacion(preasignacion: any) {

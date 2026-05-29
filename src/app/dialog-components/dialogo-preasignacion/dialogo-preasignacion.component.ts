@@ -15,6 +15,7 @@ import {
   of,
   Subscription,
 } from "rxjs";
+import { firstValueFrom } from "rxjs/internal/firstValueFrom";
 import {
   debounceTime,
   distinctUntilChanged,
@@ -36,6 +37,7 @@ import { MODALS } from "src/app/models/diccionario";
 import { DialogoCrearEspacioGrupoComponent } from "../dialogo-crear-espacio-grupo/dialogo-crear-espacio-grupo.component";
 import { UserService } from "src/app/services/user.service";
 import { ROLES } from "src/app/models/diccionario";
+import { validarHorasPlanDocentePorVinculacion } from "src/app/utils/ptd-hours";
 
 @Component({
     selector: "dialogo-preasignacion",
@@ -386,54 +388,116 @@ export class DialogoPreAsignacionPtdComponent implements OnInit {
         proyecto_academico_nombre: String(this.preasignacionForm.get("proyecto")?.value),
         activo: true,
       };
-      const esp_acad_padre =
-        this.preasignacionForm.get("espacio_academico")?.value;
-      if (
-        esp_acad_padre.espacio_modular ? esp_acad_padre.espacio_modular : false
-      ) {
-        this.savePreasign(request);
-      } else {
-        // ? no modular -> verificar que no exista preasignacion con mismo espacio y periodo
-        this.planTrabajoDocenteService
-          .get(
-            `pre_asignacion?query=activo:true,espacio_academico_id:${this.grupo.Id},periodo_id:${this.periodo.Id}`
-          )
-          .subscribe({
-            next: (resp) => {
-              const dataResp = Array.isArray(resp?.Data) ? resp.Data : [];
-              // En edición se excluye el registro actual para permitir actualizar sin falso duplicado.
-              const duplicados = this.modificando
-                ? dataResp.filter((item: any) => item?._id !== this.data.id)
-                : dataResp;
 
-              if (duplicados.length == 0) {
-                // ? continue presasignacion si cero para el grupo en particular
-                this.savePreasign(request);
-              } else {
+      this.validarHorasAntesDeGuardar().then((puedeGuardar) => {
+        if (!puedeGuardar) {
+          return;
+        }
+
+        const esp_acad_padre =
+          this.preasignacionForm.get("espacio_academico")?.value;
+        if (
+          esp_acad_padre.espacio_modular ? esp_acad_padre.espacio_modular : false
+        ) {
+          this.savePreasign(request);
+        } else {
+          // ? no modular -> verificar que no exista preasignacion con mismo espacio y periodo
+          this.planTrabajoDocenteService
+            .get(
+              `pre_asignacion?query=activo:true,espacio_academico_id:${this.grupo.Id},periodo_id:${this.periodo.Id}`
+            )
+            .subscribe({
+              next: (resp) => {
+                const dataResp = Array.isArray(resp?.Data) ? resp.Data : [];
+                // En edición se excluye el registro actual para permitir actualizar sin falso duplicado.
+                const duplicados = this.modificando
+                  ? dataResp.filter((item: any) => item?._id !== this.data.id)
+                  : dataResp;
+
+                if (duplicados.length == 0) {
+                  // ? continue presasignacion si cero para el grupo en particular
+                  this.savePreasign(request);
+                } else {
+                  this.popUpManager.showPopUpGeneric(
+                    this.translate.instant("ptd.seleccion_docente"),
+                    this.translate.instant("ptd.no_valid_pre_asignacion"),
+                    MODALS.WARNING,
+                    false
+                  );
+                }
+              },
+              error: (err) => {
                 this.popUpManager.showPopUpGeneric(
-                  this.translate.instant("ptd.seleccion_docente"),
-                  this.translate.instant("ptd.no_valid_pre_asignacion"),
-                  MODALS.WARNING,
+                  this.translate.instant("ERROR.titulo_generico"),
+                  this.translate.instant("ERROR.fallo_informacion_en") +
+                  ": <b>pre_asignacion</b>.<br><br>" +
+                  this.translate.instant("ERROR.persiste_error_comunique_OAS"),
+                  MODALS.ERROR,
                   false
                 );
-              }
-            },
-            error: (err) => {
-              this.popUpManager.showPopUpGeneric(
-                this.translate.instant("ERROR.titulo_generico"),
-                this.translate.instant("ERROR.fallo_informacion_en") +
-                ": <b>pre_asignacion</b>.<br><br>" +
-                this.translate.instant("ERROR.persiste_error_comunique_OAS"),
-                MODALS.ERROR,
-                false
-              );
-            },
-          });
-      }
+              },
+            });
+        }
+      });
     } else {
       this.popUpManager.showErrorAlert(
         this.translate.instant("ptd.alerta_campos_preasignacion")
       );
+    }
+  }
+
+  private async validarHorasAntesDeGuardar(): Promise<boolean> {
+    const docenteId = String(this.docente?.Id || "").trim();
+    const periodoId = String(this.preasignacionForm.get("periodo")?.value?.Id || "").trim();
+    const vinculacionId = String(this.preasignacionForm.get("tipo_vinculacion")?.value || "").trim();
+
+    if (!docenteId || !periodoId || !vinculacionId) {
+      return true;
+    }
+
+    try {
+      const planResp: any = await firstValueFrom(
+        this.sgaPlanTrabajoDocenteMidService.get(
+          `plan?docente=${docenteId}&vigencia=${periodoId}&vinculacion=${vinculacionId}`
+        )
+      );
+
+      const planToValidate = planResp?.Data;
+      if (!planToValidate) {
+        return true;
+      }
+
+      const validacionHoras = validarHorasPlanDocentePorVinculacion(
+        planToValidate,
+        vinculacionId
+      );
+      if (!validacionHoras.codigoAbreviacion || validacionHoras.horasRequeridas === null) {
+        this.popUpManager.showErrorAlert(
+          this.translate.instant("ptd.error_validacion_horas_tipo_vinculacion")
+        );
+        return false;
+      }
+
+      if (validacionHoras.totalHoras >= validacionHoras.horasRequeridas) {
+        this.popUpManager.showErrorAlert(
+          this.translate.instant("ptd.error_validacion_horas_docente_carga_completa", {
+            horasRequeridas: validacionHoras.horasRequeridas,
+          })
+        );
+        return false;
+      }
+
+      return true;
+    } catch (error: any) {
+      if (error?.status === 404) {
+        return true;
+      }
+
+      console.warn("No fue posible validar las horas del docente antes de guardar la preasignación", error);
+      this.popUpManager.showErrorAlert(
+        this.translate.instant("ptd.error_validacion_horas_preasignacion")
+      );
+      return false;
     }
   }
 
