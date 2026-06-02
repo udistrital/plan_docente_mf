@@ -351,6 +351,7 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
     }
 
     this.bulkApprovalInProgress = true;
+    this.popUpManager.showLoading();
     try {
       const responsableId = await this.userService.getPersonaId();
       const observacionMasiva = this.translate.instant('ptd.aprobacion_masiva_observacion');
@@ -369,6 +370,8 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
       const aprobados = Number(respAprobacionMasiva?.Data?.aprobados ?? resultados.filter((resultado: any) => resultado.aprobado).length);
       const fallidos = Number(respAprobacionMasiva?.Data?.fallidos ?? resultados.filter((resultado: any) => !resultado.aprobado).length);
 
+      this.popUpManager.closeLoading();
+
       if (aprobados > 0) {
         this.popUpManager.showSuccessAlert(
           this.translate.instant('ptd.aprobacion_masiva_exitosa', { cantidad: aprobados })
@@ -383,6 +386,7 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
       this.limpiarSeleccion();
       await this.filtrarPlanes();
     } catch (error) {
+      this.popUpManager.closeLoading();
       console.warn(error);
       this.popUpManager.showPopUpGeneric(
         this.translate.instant('ERROR.titulo_generico'),
@@ -392,6 +396,7 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
       );
     } finally {
       this.bulkApprovalInProgress = false;
+      this.popUpManager.closeLoading();
     }
   }
 
