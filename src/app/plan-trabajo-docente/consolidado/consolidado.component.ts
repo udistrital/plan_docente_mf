@@ -959,6 +959,24 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
     }
   }
 
+  private descargarArchivoBase64(base64Content: string, nombreArchivo: string, mimeType: string) {
+    const rawFile = new Uint8Array(
+      atob(base64Content)
+        .split("")
+        .map((char) => char.charCodeAt(0))
+    );
+    const urlFile = window.URL.createObjectURL(
+      new Blob([rawFile], { type: mimeType })
+    );
+    const download = document.createElement("a");
+    download.href = urlFile;
+    download.download = nombreArchivo;
+    document.body.appendChild(download);
+    download.click();
+    document.body.removeChild(download);
+    window.URL.revokeObjectURL(urlFile);
+  }
+
   obtenerDocConsolidado() {
     if (this.periodos.select) {
       this.sgaPlanTrabajoDocenteMidService
@@ -1015,6 +1033,45 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
         );
     }
   }
+
+  generarExcelActividades() {
+    if (!this.periodos.select) {
+      return;
+    }
+
+    const vigencia = this.periodos.select.Id;
+    const proyecto = this.proyectos.select ? this.proyectos.select.Id : 0;
+
+    this.sgaPlanTrabajoDocenteMidService
+      .get(`reporte/consolidado-actividades-docente?vigencia=${vigencia}&proyecto=${proyecto}`)
+      .subscribe(
+        (resp) => {
+          const excelBase64 = resp?.Data?.excel;
+          if (!excelBase64) {
+            this.popUpManager.showErrorAlert(
+              this.translate.instant("ERROR.persiste_error_comunique_OAS")
+            );
+            return;
+          }
+
+          this.descargarArchivoBase64(
+            excelBase64,
+            "Consolidado_Actividades.xlsx",
+            "application/vnd.ms-excel"
+          );
+        },
+        (err) => {
+          this.popUpManager.showPopUpGeneric(
+            this.translate.instant("ERROR.titulo_generico"),
+            this.translate.instant("ERROR.persiste_error_comunique_OAS"),
+            MODALS.ERROR,
+            false
+          );
+          console.warn(err);
+        }
+      );
+  }
+
   previewFile(url: string) {
     const dialogDoc = new MatDialogConfig();
     dialogDoc.width = "65vw";

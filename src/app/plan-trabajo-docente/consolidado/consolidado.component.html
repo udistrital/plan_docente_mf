@@ -266,6 +266,13 @@
               >
                 {{ "ptd.generar_consolidado" | translate }}
               </button>
+              <button
+                mat-stroked-button
+                *ngIf="this.periodos.select && this.proyectos.select"
+                (click)="generarExcelActividades()"
+              >
+                Generar Excel Actividades
+              </button>
               &nbsp;
               <div class="info-alert mb-0">
                 {{ "ptd.generador_consolidado_info" | translate }}
