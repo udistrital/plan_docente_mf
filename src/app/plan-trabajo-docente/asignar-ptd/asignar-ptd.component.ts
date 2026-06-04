@@ -23,7 +23,10 @@ import { firstValueFrom } from "rxjs/internal/firstValueFrom";
 import { Observable } from "rxjs/internal/Observable";
 import { PermisosUtils } from "src/app/utils/role-permissions";
 import { AcademicaJbpmService } from "src/app/services/academica-jbpm.service";
-import { validarHorasPlanDocentePorVinculacion } from "src/app/utils/ptd-hours";
+import {
+  debeValidarHorasSegunRolEnvio,
+  validarHorasPlanDocentePorVinculacion,
+} from "src/app/utils/ptd-hours";
 
 @Component({
   selector: "app-asignar-ptd",
@@ -411,14 +414,22 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
               event.rowData
             );
             this.popUpManager.closeLoading();
-            this.popUpManager.showSuccessAlert(
-              this.translate.instant("ptd.plan_enviado_ok")
+            await this.popUpManager.showPopUpGeneric(
+              this.translate.instant("GLOBAL.operacion_exitosa"),
+              this.translate.instant("ptd.plan_enviado_ok"),
+              MODALS.SUCCESS,
+              false
             );
           } catch (err) {
             this.popUpManager.closeLoading();
             console.warn('Error en enviarSegunRol desde accionEnviar:', err);
             const mensajeError = (err as any)?.message || this.translate.instant("ptd.error_enviar_plan");
-            this.popUpManager.showErrorAlert(mensajeError);
+            await this.popUpManager.showPopUpGeneric(
+              this.translate.instant("GLOBAL.error"),
+              mensajeError,
+              MODALS.ERROR,
+              false
+            );
           }
         }
       });
@@ -828,115 +839,123 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
     });
   }
 
-  async enviarSegunRol(coordinador: boolean, id_plan: string, rowData?: any) {
+  async enviarSegunRol(coordinador: boolean, id_plan: string, rowData?: any): Promise<void> {
     const cod_abrev = coordinador ? "ENV_COO" : "ENV_DOC";
     this.errorCargaAutomaticaMostrado = false;
     const estado = this.estadosPlan.find(
       (estado) => estado.codigo_abreviacion === cod_abrev
     );
-    if (estado) {
-      this.planTrabajoDocenteService.get("plan_docente/" + id_plan).subscribe({
-        next: async (res_g) => {
-          try {
-            let planToValidate: any = null;
-            try {
-              const planResp: any = await firstValueFrom(
-                this.sgaPlanTrabajoDocenteMidService.get(
-                  `plan?docente=${rowData?.docente_id}&vigencia=${rowData?.periodo_id}&vinculacion=${rowData?.tipo_vinculacion_id}`
-                )
-              );
-              planToValidate = planResp?.Data;
-            } catch (error) {
-              console.warn('No fue posible cargar el plan para validación de horas', error);
-              this.popUpManager.showErrorAlert(
-                this.translate.instant('ptd.error_validacion_horas_cargar_plan')
-              );
-              return;
-            }
-
-          if (!planToValidate) {
-            this.popUpManager.showErrorAlert(
-              this.translate.instant('ptd.error_validacion_horas_plan_no_encontrado')
-            );
-            return;
-          }
-
-          const validacionHoras = validarHorasPlanDocentePorVinculacion(
-            planToValidate,
-            String(rowData?.tipo_vinculacion_id || "").trim()
-          );
-          if (!validacionHoras.codigoAbreviacion || validacionHoras.horasRequeridas === null) {
-            this.popUpManager.showErrorAlert(
-              this.translate.instant('ptd.error_validacion_horas_tipo_vinculacion')
-            );
-            return;
-          }
-          if (validacionHoras.totalHoras !== validacionHoras.horasRequeridas) {
-            this.popUpManager.showErrorAlert(
-              this.translate.instant('ptd.error_validacion_horas_total_plan', {
-                horasRequeridas: validacionHoras.horasRequeridas,
-                totalHoras: validacionHoras.totalHoras,
-              })
-            );
-            return;
-          }
-
-      if (coordinador) {
-        const cargaAutomaticaOk = await this.persistirCargaAutomaticaDesdePreasignacion(
-          rowData,
-          id_plan,
-          res_g?.Data
-        );
-        if (!cargaAutomaticaOk) {
-          if (!this.errorCargaAutomaticaMostrado) {
-            this.popUpManager.showErrorAlert(
-              this.translate.instant("ptd.error_enviar_plan")
-            );
-          }
-          throw new Error('Error al persistir carga automática');
-        }
-      }
-
-      if (!coordinador) {
-        let respuestaJson = res_g.Data.respuesta
-          ? JSON.parse(res_g.Data.respuesta)
-          : {};
-        respuestaJson["DocenteAprueba"] = new Date().toLocaleString(
-          "es-CO",
-          { timeZone: "America/Bogota" }
-        );
-        res_g.Data.respuesta = JSON.stringify(respuestaJson);
-      }
-      res_g.Data.estado_plan_id = estado._id;
-
-      try {
-        const res_p: any = await firstValueFrom(
-          this.planTrabajoDocenteService.put("plan_docente/" + id_plan, res_g.Data)
-        );
-
-        if (coordinador) {
-          const preasignacionesActualizadas = await this.marcarPreasignacionesComoAprobadasPorCoordinacion(
-            rowData
-          );
-
-          if (!preasignacionesActualizadas) {
-            throw new Error(this.translate.instant("ptd.error_enviar_plan"));
-          }
-        }
-        await this.loadAsignaciones();
-      } catch (err_p) {
-        throw err_p;
-      }
-
-          } catch (err_g) {
-            throw err_g;
-          }
-        },
-        error: (err_g) => {
-          throw err_g;
-        },
-      });
+    if (!estado) {
+      throw new Error(this.translate.instant("ptd.error_enviar_plan"));
     }
+
+    const res_g: any = await firstValueFrom(
+      this.planTrabajoDocenteService.get("plan_docente/" + id_plan)
+    );
+
+    const validacionFila = validarHorasPlanDocentePorVinculacion(
+      null,
+      String(rowData?.tipo_vinculacion || "").trim()
+    );
+    const debeValidarHoras = debeValidarHorasSegunRolEnvio(
+      validacionFila.registraHorasNoLectivas,
+      coordinador
+    );
+
+    if (debeValidarHoras) {
+      let planToValidate: any = null;
+      try {
+        const planResp: any = await firstValueFrom(
+          this.sgaPlanTrabajoDocenteMidService.get(
+            `plan?docente=${rowData?.docente_id}&vigencia=${rowData?.periodo_id}&vinculacion=${rowData?.tipo_vinculacion_id}`
+          )
+        );
+        planToValidate = planResp?.Data;
+      } catch (error) {
+        console.warn("No fue posible cargar el plan para validación de horas", error);
+        throw new Error(this.translate.instant("ptd.error_validacion_horas_cargar_plan"));
+      }
+
+      if (!planToValidate) {
+        throw new Error(this.translate.instant("ptd.error_validacion_horas_plan_no_encontrado"));
+      }
+
+      const codigoAbreviacionFila =
+        validacionFila.codigoAbreviacion ||
+        String(rowData?.tipo_vinculacion || "").trim();
+      const validacionHoras = validarHorasPlanDocentePorVinculacion(
+        planToValidate,
+        codigoAbreviacionFila
+      );
+      if (
+        !validacionHoras.codigoAbreviacion ||
+        validacionHoras.horasMaximas === null ||
+        validacionHoras.estaEnRango === null
+      ) {
+        throw new Error(this.translate.instant("ptd.error_validacion_horas_tipo_vinculacion"));
+      }
+
+      if (!validacionHoras.estaEnRango) {
+        if (
+          validacionHoras.horasMinimas !== null &&
+          validacionHoras.horasMinimas !== validacionHoras.horasMaximas
+        ) {
+          throw new Error(
+            this.translate.instant("ptd.error_validacion_horas_rango_plan", {
+              horasMinimas: validacionHoras.horasMinimas,
+              horasMaximas: validacionHoras.horasMaximas,
+              totalHoras: validacionHoras.totalHoras,
+            })
+          );
+        }
+
+        throw new Error(
+          this.translate.instant("ptd.error_validacion_horas_total_plan", {
+            horasRequeridas: validacionHoras.horasMaximas,
+            totalHoras: validacionHoras.totalHoras,
+          })
+        );
+      }
+    }
+
+    if (coordinador) {
+      const cargaAutomaticaOk = await this.persistirCargaAutomaticaDesdePreasignacion(
+        rowData,
+        id_plan,
+        res_g?.Data
+      );
+      if (!cargaAutomaticaOk) {
+        throw new Error(this.translate.instant("ptd.error_enviar_plan"));
+      }
+    }
+
+    if (!coordinador) {
+      const respuestaJson = res_g.Data.respuesta
+        ? JSON.parse(res_g.Data.respuesta)
+        : {};
+      respuestaJson["DocenteAprueba"] = new Date().toLocaleString(
+        "es-CO",
+        { timeZone: "America/Bogota" }
+      );
+      res_g.Data.respuesta = JSON.stringify(respuestaJson);
+    }
+    res_g.Data.estado_plan_id = estado._id;
+
+    await firstValueFrom(
+      this.planTrabajoDocenteService.put("plan_docente/" + id_plan, res_g.Data)
+    );
+
+    if (coordinador) {
+      const preasignacionesActualizadas = await this.marcarPreasignacionesComoAprobadasPorCoordinacion(
+        rowData
+      );
+
+      if (!preasignacionesActualizadas) {
+        throw new Error(this.translate.instant("ptd.error_enviar_plan"));
+      }
+    }
+
+    await this.loadAsignaciones();
   }
 
   private async persistirCargaAutomaticaDesdePreasignacion(
