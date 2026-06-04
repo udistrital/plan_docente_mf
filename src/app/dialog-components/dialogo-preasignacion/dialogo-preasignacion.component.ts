@@ -71,16 +71,9 @@ export class DialogoPreAsignacionPtdComponent implements OnInit {
   calendarEventosPTD: any[] = [];
   calendarEventoSeleccionado: any = null;
   enRangoCalendario: boolean = false;
+  private readonly codigosVinculacionPermitidos = ["DCTC", "DCMT", "TCO", "MTO", "HCH"];
 
-  // TODO: vinculación quemada aquí ???
-  tipoVinculacion = [
-    { id: 293, nombre: "Carrera tiempo completo" },
-    { id: 294, nombre: "Carrera medio tiempo" },
-    { id: 296, nombre: "Tiempo completo ocasional" },
-    { id: 297, nombre: "Hora cátedra prestaciones" },
-    { id: 298, nombre: "Medio tiempo ocasional" },
-    { id: 299, nombre: "Hora cátedra por honorarios" },
-  ];
+  tipoVinculacion: Array<{ id: number; nombre: string; codigo_abreviacion: string }> = [];
 
   tipoVinculacionFiltered: any[] = [];
 
@@ -183,6 +176,7 @@ export class DialogoPreAsignacionPtdComponent implements OnInit {
     this.userService.getUserRoles().then(roles => {
       this.roles = roles;
     });
+    this.cargarTiposVinculacion();
     this.cargarEventoPTD().then(() => {
       if (this.calendarEventosPTD && this.calendarEventosPTD.length > 0) {
         this.proyectosCoordinador = this.calendarEventosPTD.map((e: any) => ({
@@ -322,6 +316,42 @@ export class DialogoPreAsignacionPtdComponent implements OnInit {
     this.opcionesDocente = [];
   }
 
+  private cargarTiposVinculacion() {
+    this.parametrosService
+      .get(
+        "parametro?query=TipoParametroId__CodigoAbreviacion:TV&fields=Id,Nombre,CodigoAbreviacion&limit=-1"
+      )
+      .subscribe({
+        next: (resp: RespFormat) => {
+          const data = Array.isArray(resp?.Data) ? resp.Data : [];
+          const vinculaciones = data
+            .map((item: any) => ({
+              id: Number(item?.Id),
+              nombre: String(item?.Nombre || "").trim(),
+              codigo_abreviacion: String(item?.CodigoAbreviacion || "").trim().toUpperCase(),
+            }))
+            .filter((item: any) =>
+              !!item.codigo_abreviacion &&
+              this.codigosVinculacionPermitidos.includes(item.codigo_abreviacion)
+            );
+
+          if (vinculaciones.length > 0) {
+            this.tipoVinculacion = vinculaciones;
+            this.tipoVinculacionFiltered = this.docente
+              ? this.tipoVinculacion.filter((vinculacion) =>
+                  this.docente?.Vinculaciones?.some(
+                    (vinculacionDocente: number) => vinculacionDocente == vinculacion.id
+                  )
+                )
+              : [];
+          }
+        },
+        error: (error: any) => {
+          console.warn("No fue posible cargar dinámicamente los tipos de vinculación", error);
+        },
+      });
+  }
+
   event2text(event: Event): string {
     return (event.target as HTMLInputElement).value;
   }
@@ -450,6 +480,10 @@ export class DialogoPreAsignacionPtdComponent implements OnInit {
     const docenteId = String(this.docente?.Id || "").trim();
     const periodoId = String(this.preasignacionForm.get("periodo")?.value?.Id || "").trim();
     const vinculacionId = String(this.preasignacionForm.get("tipo_vinculacion")?.value || "").trim();
+    const vinculacionSeleccionada = this.tipoVinculacion.find(
+      (vinculacion) => String(vinculacion.id) === vinculacionId
+    );
+    const codigoAbreviacion = String(vinculacionSeleccionada?.codigo_abreviacion || "").trim();
 
     if (!docenteId || !periodoId || !vinculacionId) {
       return true;
@@ -469,19 +503,27 @@ export class DialogoPreAsignacionPtdComponent implements OnInit {
 
       const validacionHoras = validarHorasPlanDocentePorVinculacion(
         planToValidate,
-        vinculacionId
+        codigoAbreviacion
       );
-      if (!validacionHoras.codigoAbreviacion || validacionHoras.horasRequeridas === null) {
+      if (!validacionHoras.codigoAbreviacion || validacionHoras.horasMaximas === null) {
         this.popUpManager.showErrorAlert(
           this.translate.instant("ptd.error_validacion_horas_tipo_vinculacion")
         );
         return false;
       }
 
-      if (validacionHoras.totalHoras >= validacionHoras.horasRequeridas) {
+      const horasNuevaPreasignacion = this.modificando
+        ? 0
+        : await this.obtenerHorasNuevaPreasignacion();
+
+      const totalHorasConNuevaPreasignacion =
+        validacionHoras.totalHoras + horasNuevaPreasignacion;
+
+      if (totalHorasConNuevaPreasignacion > validacionHoras.horasMaximas) {
         this.popUpManager.showErrorAlert(
-          this.translate.instant("ptd.error_validacion_horas_docente_carga_completa", {
-            horasRequeridas: validacionHoras.horasRequeridas,
+          this.translate.instant("ptd.error_validacion_horas_total_plan", {
+            horasRequeridas: validacionHoras.horasMaximas,
+            totalHoras: totalHorasConNuevaPreasignacion,
           })
         );
         return false;
@@ -499,6 +541,43 @@ export class DialogoPreAsignacionPtdComponent implements OnInit {
       );
       return false;
     }
+  }
+
+  private async obtenerHorasNuevaPreasignacion(): Promise<number> {
+    const periodoSeleccionado = this.preasignacionForm.get("periodo")?.value as Periodo;
+    const espacioSeleccionado = this.preasignacionForm.get("espacio_academico")?.value;
+    const grupoSeleccionado = this.preasignacionForm.get("grupo")?.value;
+
+    const partesPeriodo = this.obtenerPartesPeriodo(periodoSeleccionado);
+    const codigoEspacio = String(espacioSeleccionado?.codigo || "").trim();
+    const grupo = String(
+      grupoSeleccionado?.grupo ??
+      grupoSeleccionado?.Grupo ??
+      grupoSeleccionado?.grupo_id ??
+      grupoSeleccionado?.Id ??
+      ""
+    ).trim();
+
+    if (!partesPeriodo || !codigoEspacio || !grupo) {
+      throw new Error("No fue posible resolver datos para validar horas de la nueva preasignación");
+    }
+
+    const horariosResp: any = await firstValueFrom(
+      this.sgaPlanTrabajoDocenteMidService.get(
+        `espacio-academico/informacion-horarios/${partesPeriodo.anio}/${partesPeriodo.periodo}/${codigoEspacio}/${grupo}`
+      )
+    );
+
+    const colocaciones = Array.isArray(horariosResp?.Data) ? horariosResp.Data : [];
+
+    return colocaciones.reduce((acumulado: number, colocacion: any) => {
+      const horas = Number(
+        colocacion?.ResumenColocacionEspacioFisico?.colocacion?.horas ??
+        colocacion?.ColocacionEspacioAcademico?.horas ??
+        0
+      );
+      return acumulado + (Number.isNaN(horas) ? 0 : horas);
+    }, 0);
   }
 
   savePreasign(request: any) {

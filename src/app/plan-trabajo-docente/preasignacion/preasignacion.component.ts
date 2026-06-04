@@ -338,7 +338,7 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
 
   // Reseta el check de aprobacion_proyecto para otras preasignaciones del mismo proyecto
   private async resetearAprobacionProyecto(preasignacion: any): Promise<void> {
-    if (!preasignacion?.codigo_proyecto_academico || !preasignacion?.periodo_id) {
+    if (!preasignacion?.codigo_proyecto_academico || !preasignacion?.periodo_id || !preasignacion?.tipo_vinculacion_id) {
       return;
     }
 
@@ -352,7 +352,8 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
 
     const proyectoId = preasignacion.codigo_proyecto_academico;
     const periodoId = preasignacion.periodo_id;
-    
+    const vinculacionId = String(preasignacion.tipo_vinculacion_id || "").trim();
+
     try {
       // Obtener todas las preasignaciones del proyecto en este período
       const resp: any = await firstValueFrom(
@@ -361,11 +362,12 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
 
       const preasignaciones = Array.isArray(resp?.Data) ? resp.Data : [];
       
-      // Filtrar las preasignaciones del mismo docente y proyecto que tienen aprobacion_proyecto = true
+      // Filtrar las preasignaciones del mismo docente, proyecto y vinculación que tienen aprobacion_proyecto = true
       const idsAResetear = preasignaciones
-        .filter((p: any) => 
+        .filter((p: any) =>
           String(p?.codigo_proyecto_academico || "").trim() === String(proyectoId).trim() &&
           String(p?.docente_id || "").trim() === String(preasignacion.docente_id || "").trim() &&
+          String(p?.tipo_vinculacion_id || "").trim() === vinculacionId &&
           p?.id !== preasignacion.id &&
           this.getAprobacionValue(p?.aprobacion_proyecto)
         )
@@ -394,6 +396,7 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
         if (
           item.codigo_proyecto_academico === proyectoId &&
           String(item.docente_id || "").trim() === String(preasignacion.docente_id || "").trim() &&
+          String(item.tipo_vinculacion_id || "").trim() === vinculacionId &&
           item.id !== preasignacion.id &&
           item.aprobacion_proyecto?.value
         ) {
