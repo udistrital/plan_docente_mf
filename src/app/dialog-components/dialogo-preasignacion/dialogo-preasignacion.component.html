@@ -306,6 +306,29 @@
           </mat-form-field>
         </div>
 
+        <div class="alert info horario-info" *ngIf="mostrarHorarioEspacioInfo">
+          <div class="horario-info__header">
+            <mat-icon class="icon">schedule</mat-icon>
+            <div class="horario-info__summary">
+              <strong>{{ "ptd.detalle_horario_espacio" | translate }}</strong>
+              <span *ngIf="!cargandoHorarioEspacio">{{ "ptd.horas" | translate }}: {{ totalHorasHorarioEspacio }}</span>
+            </div>
+          </div>
+
+          <div class="horario-info__loading" *ngIf="cargandoHorarioEspacio">
+            <span class="horario-info__spinner" aria-hidden="true"></span>
+            <span>{{ "GLOBAL.cargando" | translate }}</span>
+          </div>
+
+          <div class="horario-info__list" *ngIf="!cargandoHorarioEspacio">
+            <div class="horario-info__item" *ngFor="let horario of horariosEspacioInfo">
+              <span class="horario-info__day">{{ horario.dia }}</span>
+              <span class="horario-info__slot">{{ horario.franja }}</span>
+              <span class="horario-info__hours">{{ horario.horas }} {{ "ptd.horas" | translate }}</span>
+            </div>
+          </div>
+        </div>
+
         <mat-dialog-actions align="center">
           <button mat-stroked-button color="primary" (click)="cancelar()">
             {{ "GLOBAL.cancelar" | translate }}
