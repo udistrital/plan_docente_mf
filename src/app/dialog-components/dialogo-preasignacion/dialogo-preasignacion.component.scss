@@ -62,3 +62,85 @@ mat-icon-button {
 b {
   color: #024a72;
 }
+
+.horario-info {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 12px 0;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background-color: #e8f5ff;
+  color: #024a72;
+  font-size: 13px;
+}
+
+.horario-info__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.horario-info__summary {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.horario-info__list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.horario-info__loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 2px;
+}
+
+.horario-info__spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(2, 74, 114, 0.2);
+  border-top-color: #024a72;
+  border-radius: 50%;
+  animation: horario-spin 0.8s linear infinite;
+}
+
+.horario-info__item {
+  display: grid;
+  grid-template-columns: minmax(110px, 140px) minmax(120px, 1fr) auto;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background-color: rgba(255, 255, 255, 0.6);
+}
+
+.horario-info__day {
+  font-weight: 600;
+}
+
+.horario-info__slot,
+.horario-info__hours {
+  word-break: break-word;
+}
+
+.horario-info .icon {
+  font-size: 18px;
+  width: 18px;
+  height: 18px;
+}
+
+@keyframes horario-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 768px) {
+  .horario-info__item {
+    grid-template-columns: 1fr;
+  }
+}
