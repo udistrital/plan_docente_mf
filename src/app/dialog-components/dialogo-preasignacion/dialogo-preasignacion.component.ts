@@ -39,6 +39,14 @@ import { UserService } from "src/app/services/user.service";
 import { ROLES } from "src/app/models/diccionario";
 import { validarHorasPlanDocentePorVinculacion } from "src/app/utils/ptd-hours";
 
+interface HorarioEspacioInfo {
+  dia: string;
+  franja: string;
+  horas: string;
+}
+
+const DIAS_SEMANA = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
+
 @Component({
     selector: "dialogo-preasignacion",
     templateUrl: "./dialogo-preasignacion.component.html",
@@ -71,6 +79,10 @@ export class DialogoPreAsignacionPtdComponent implements OnInit {
   calendarEventosPTD: any[] = [];
   calendarEventoSeleccionado: any = null;
   enRangoCalendario: boolean = false;
+  horariosEspacioInfo: HorarioEspacioInfo[] = [];
+  totalHorasHorarioEspacio: string = "0";
+  cargandoHorarioEspacio: boolean = false;
+  private resumenHorarioRequestId = 0;
   private readonly codigosVinculacionPermitidos = ["DCTC", "DCMT", "TCO", "MTO", "HCH"];
 
   tipoVinculacion: Array<{ id: number; nombre: string; codigo_abreviacion: string }> = [];
@@ -233,6 +245,19 @@ export class DialogoPreAsignacionPtdComponent implements OnInit {
     this.preasignacionForm.get("nivel")?.disable();
     this.preasignacionForm.get("doc_docente")?.disable();
     this.preasignacionForm.get("tipo_vinculacion")?.disable();
+
+    this.preasignacionForm
+      .get("espacio_academico")
+      ?.valueChanges.subscribe(() => {
+        this.reiniciarSeleccionGrupo();
+        this.limpiarResumenHorarioEspacio();
+      });
+
+    this.preasignacionForm
+      .get("grupo")
+      ?.valueChanges.subscribe(() => {
+        this.actualizarResumenHorarioEspacio();
+      });
 
     this.preasignacionForm
       .get("docente")
@@ -512,12 +537,14 @@ export class DialogoPreAsignacionPtdComponent implements OnInit {
         return false;
       }
 
-      const horasNuevaPreasignacion = this.modificando
-        ? 0
-        : await this.obtenerHorasNuevaPreasignacion();
+      const horasNuevaPreasignacion = await this.obtenerHorasPreasignacionFormulario();
+      const horasPreviasPreasignacion = this.modificando
+        ? this.obtenerHorasPreasignacionEnPlan(planToValidate, this.data?.espacio_academico_id)
+        : 0;
 
-      const totalHorasConNuevaPreasignacion =
-        validacionHoras.totalHoras + horasNuevaPreasignacion;
+      const totalHorasConNuevaPreasignacion = this.modificando
+        ? validacionHoras.totalHoras - horasPreviasPreasignacion + horasNuevaPreasignacion
+        : validacionHoras.totalHoras + horasNuevaPreasignacion;
 
       if (totalHorasConNuevaPreasignacion > validacionHoras.horasMaximas) {
         this.popUpManager.showErrorAlert(
@@ -543,7 +570,144 @@ export class DialogoPreAsignacionPtdComponent implements OnInit {
     }
   }
 
-  private async obtenerHorasNuevaPreasignacion(): Promise<number> {
+  private obtenerHorasPreasignacionEnPlan(planDocente: any, espacioAcademicoId: any): number {
+    const idEspacio = String(espacioAcademicoId || "").trim();
+    if (!idEspacio) {
+      return 0;
+    }
+
+    const seleccion = Number(planDocente?.seleccion || 0);
+    const cargaItems = Array.isArray(planDocente?.carga?.[seleccion])
+      ? planDocente.carga[seleccion]
+      : Array.isArray(planDocente?.carga?.[0])
+        ? planDocente.carga[0]
+        : [];
+
+    return cargaItems.reduce((acumulado: number, item: any) => {
+      const idCarga = String(item?.espacio_academico_id || item?.id_espacio_academico || "").trim();
+      if (idCarga !== idEspacio) {
+        return acumulado;
+      }
+
+      const horas = Number(item?.horario?.horas);
+      return acumulado + (Number.isNaN(horas) ? 0 : horas);
+    }, 0);
+  }
+
+  private async obtenerHorasPreasignacionFormulario(): Promise<number> {
+    const colocaciones = await this.obtenerColocacionesEspacioFormulario();
+    return this.calcularHorasColocaciones(colocaciones);
+  }
+
+  private async actualizarResumenHorarioEspacio(): Promise<void> {
+    const espacioSeleccionado = this.preasignacionForm.get("espacio_academico")?.value;
+    const grupoSeleccionado = this.preasignacionForm.get("grupo")?.value;
+    const requestId = ++this.resumenHorarioRequestId;
+
+    if (!espacioSeleccionado || !grupoSeleccionado) {
+      this.limpiarResumenHorarioEspacio();
+      return;
+    }
+
+    this.cargandoHorarioEspacio = true;
+
+    try {
+      const colocaciones = await this.obtenerColocacionesEspacioFormulario();
+      if (requestId !== this.resumenHorarioRequestId) {
+        return;
+      }
+
+      if (!colocaciones.length) {
+        this.limpiarResumenHorarioEspacio();
+        return;
+      }
+
+      this.horariosEspacioInfo = this.mapearHorariosEspacio(colocaciones);
+      this.totalHorasHorarioEspacio = this.formatearHoras(
+        this.calcularHorasColocaciones(colocaciones)
+      );
+    } catch {
+      if (requestId === this.resumenHorarioRequestId) {
+        this.limpiarResumenHorarioEspacio();
+      }
+    } finally {
+      if (requestId === this.resumenHorarioRequestId) {
+        this.cargandoHorarioEspacio = false;
+      }
+    }
+  }
+
+  private limpiarResumenHorarioEspacio(): void {
+    this.resumenHorarioRequestId++;
+    this.horariosEspacioInfo = [];
+    this.totalHorasHorarioEspacio = "0";
+    this.cargandoHorarioEspacio = false;
+  }
+
+  get mostrarHorarioEspacioInfo(): boolean {
+    const espacioSeleccionado = this.preasignacionForm.get("espacio_academico")?.value;
+    const grupoSeleccionado = this.preasignacionForm.get("grupo")?.value;
+    return !!espacioSeleccionado && !!grupoSeleccionado && (
+      this.cargandoHorarioEspacio || this.horariosEspacioInfo.length > 0
+    );
+  }
+
+  private reiniciarSeleccionGrupo(): void {
+    this.grupo = null;
+    this.preasignacionForm.get("grupo")?.setValue(null, { emitEvent: false });
+    this.preasignacionForm.get("proyecto")?.setValue(null, { emitEvent: false });
+    this.preasignacionForm.get("nivel")?.setValue(null, { emitEvent: false });
+  }
+
+  private mapearHorariosEspacio(colocaciones: any[]): HorarioEspacioInfo[] {
+    return colocaciones
+      .map((colocacion: any) => {
+        const horario =
+          colocacion?.ResumenColocacionEspacioFisico?.colocacion ??
+          colocacion?.ColocacionEspacioAcademico ??
+          {};
+
+        const finalPosition =
+          horario?.finalPosition || horario?.dragPosition || horario?.prevPosition || {};
+        const x = Number(finalPosition?.x);
+        const diaIndex = Number.isNaN(x) ? -1 : Math.round(x / 110);
+        const dia = DIAS_SEMANA[diaIndex] || this.translate.instant("ptd.dia_no_disponible");
+        const franja = String(horario?.horaFormato || "").trim() ||
+          this.translate.instant("ptd.franja_no_disponible");
+        const horas = this.formatearHoras(Number(horario?.horas || 0));
+
+        return {
+          dia,
+          franja,
+          horas,
+          diaIndex,
+        };
+      })
+      .sort((actual: any, siguiente: any) => {
+        if (actual.diaIndex !== siguiente.diaIndex) {
+          return actual.diaIndex - siguiente.diaIndex;
+        }
+        return String(actual.franja).localeCompare(String(siguiente.franja));
+      })
+      .map(({ dia, franja, horas }) => ({ dia, franja, horas }));
+  }
+
+  private formatearHoras(horas: number): string {
+    return Number.isInteger(horas) ? String(horas) : String(Number(horas.toFixed(2)));
+  }
+
+  private calcularHorasColocaciones(colocaciones: any[]): number {
+    return colocaciones.reduce((acumulado: number, colocacion: any) => {
+      const horas = Number(
+        colocacion?.ResumenColocacionEspacioFisico?.colocacion?.horas ??
+        colocacion?.ColocacionEspacioAcademico?.horas ??
+        0
+      );
+      return acumulado + (Number.isNaN(horas) ? 0 : horas);
+    }, 0);
+  }
+
+  private async obtenerColocacionesEspacioFormulario(): Promise<any[]> {
     const periodoSeleccionado = this.preasignacionForm.get("periodo")?.value as Periodo;
     const espacioSeleccionado = this.preasignacionForm.get("espacio_academico")?.value;
     const grupoSeleccionado = this.preasignacionForm.get("grupo")?.value;
@@ -568,16 +732,7 @@ export class DialogoPreAsignacionPtdComponent implements OnInit {
       )
     );
 
-    const colocaciones = Array.isArray(horariosResp?.Data) ? horariosResp.Data : [];
-
-    return colocaciones.reduce((acumulado: number, colocacion: any) => {
-      const horas = Number(
-        colocacion?.ResumenColocacionEspacioFisico?.colocacion?.horas ??
-        colocacion?.ColocacionEspacioAcademico?.horas ??
-        0
-      );
-      return acumulado + (Number.isNaN(horas) ? 0 : horas);
-    }, 0);
+    return Array.isArray(horariosResp?.Data) ? horariosResp.Data : [];
   }
 
   savePreasign(request: any) {
@@ -923,6 +1078,7 @@ export class DialogoPreAsignacionPtdComponent implements OnInit {
     this.preasignacionForm.get("proyecto")?.setValue(null);
     this.opcionesGrupos = [];
     this.opcionesProyectos = [];
+    this.limpiarResumenHorarioEspacio();
     return new Promise((resolve, reject) => {
       if (this.preasignacionForm.get("espacio_academico")?.value != null) {
         this.espacio_academico =
@@ -1037,6 +1193,7 @@ export class DialogoPreAsignacionPtdComponent implements OnInit {
     } else {
       this.preasignacionForm.get("nivel")?.setValue(null);
       this.preasignacionForm.get("proyecto")?.setValue(null);
+      this.limpiarResumenHorarioEspacio();
     }
   }
 
