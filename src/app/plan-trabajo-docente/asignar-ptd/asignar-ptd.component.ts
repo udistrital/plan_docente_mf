@@ -799,7 +799,7 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
     this.preasignacionesPeriodo = [];
     this.dataSource.filter = '';
     this.hasAttemptedToLoad = false;
-    if (this.periodo.Id) {
+    if (this.periodo && this.periodo.Id) {
       this.cargarPeriodosAnteriores(this.periodo);
       this.verificarRangoFechas();
       if (!this.enRangoCalendario) {
