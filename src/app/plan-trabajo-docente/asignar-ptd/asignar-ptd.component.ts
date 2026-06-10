@@ -89,7 +89,6 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
   detalleAsignacion: any = {};
   dataDocentes_ptd: any[] = [];
   detallesGeneral: any = {};
-  private errorCargaAutomaticaMostrado = false;
   private proyectosCoordinador: string[] = [];
   private preasignacionesPeriodo: any[] = [];
   hasAttemptedToLoad = false;
@@ -841,7 +840,6 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
 
   async enviarSegunRol(coordinador: boolean, id_plan: string, rowData?: any): Promise<void> {
     const cod_abrev = coordinador ? "ENV_COO" : "ENV_DOC";
-    this.errorCargaAutomaticaMostrado = false;
     const estado = this.estadosPlan.find(
       (estado) => estado.codigo_abreviacion === cod_abrev
     );
@@ -857,7 +855,8 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
       null,
       String(rowData?.tipo_vinculacion || "").trim()
     );
-    const debeValidarHoras = debeValidarHorasSegunRolEnvio(
+    const vinculacionSinNoLectivas = validacionFila.registraHorasNoLectivas === false;
+    const debeValidarHoras = vinculacionSinNoLectivas || debeValidarHorasSegunRolEnvio(
       validacionFila.registraHorasNoLectivas,
       coordinador
     );
@@ -896,6 +895,16 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
       }
 
       if (!validacionHoras.estaEnRango) {
+        // Para vinculaciones sin horas no lectivas, se bloquea inmediatamente cuando se supera el tope.
+        if (vinculacionSinNoLectivas && validacionHoras.totalHoras > validacionHoras.horasMaximas) {
+          throw new Error(
+            this.translate.instant("ptd.error_validacion_horas_total_plan", {
+              horasRequeridas: validacionHoras.horasMaximas,
+              totalHoras: validacionHoras.totalHoras,
+            })
+          );
+        }
+
         if (
           validacionHoras.horasMinimas !== null &&
           validacionHoras.horasMinimas !== validacionHoras.horasMaximas
@@ -1152,19 +1161,16 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
       );
 
       if (materiasConCruce.length > 0) {
-        const listadoMaterias = materiasConCruce
-          .map((materia) => `• ${materia.nombre} (${materia.bloqueHorario})`)
+        const detalleCruces = materiasConCruce
+          .map((materia) =>
+            `Conflicto de Horario: El espacio académico ${materia.nombre} presenta cruce en ${materia.bloqueHorario}.`
+          )
           .join("<br>");
 
-        this.errorCargaAutomaticaMostrado = true;
-        this.popUpManager.showPopUpGeneric(
-          this.translate.instant("ptd.error_cruce_horario_carga_automatica"),
-          `${this.translate.instant("ptd.error_cruce_horario_materias")}<br><br>${listadoMaterias}`,
-          MODALS.ERROR,
-          false
-        );
-        return false;
+        throw new Error(detalleCruces);
       }
+
+      this.validarTopeHorasAntesDePersistirCarga(dataPlan, rowData, cargasNuevas);
 
       const resumenActual = planDocenteActual?.resumen
         ? planDocenteActual.resumen
@@ -1173,17 +1179,25 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
       const estadoActual =
         planDocenteActual?.estado_plan_id || dataPlan?.estado_plan?.[seleccion] || "Sin definir";
 
-      await firstValueFrom(
-        this.sgaPlanTrabajoDocenteMidService.put("plan/", {
-          carga_plan: cargasNuevas,
-          plan_docente: {
-            id: planId,
-            resumen: resumenActual,
-            estado_plan: estadoActual,
-          },
-          descartar: [],
-        })
-      );
+      try {
+        await firstValueFrom(
+          this.sgaPlanTrabajoDocenteMidService.put("plan/", {
+            carga_plan: cargasNuevas,
+            plan_docente: {
+              id: planId,
+              resumen: resumenActual,
+              estado_plan: estadoActual,
+            },
+            descartar: [],
+          })
+        );
+      } catch (error: any) {
+        const conflictosBackend = this.extraerConflictosCruce(error);
+        if (conflictosBackend.length > 0) {
+          throw new Error(this.construirMensajeDetalladoCruces(conflictosBackend));
+        }
+        throw error;
+      }
 
       const preasignacionesActualizadas = await this.marcarPreasignacionesComoAprobadasPorCoordinacion(
         rowData,
@@ -1195,10 +1209,63 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
       }
 
       return true;
-    } catch (error) {
+    } catch (error: any) {
+      if (error instanceof Error && error.message) {
+        throw error;
+      }
       console.warn("No fue posible persistir carga automática desde preasignación", error);
       return false;
     }
+  }
+
+  private extraerConflictosCruce(error: any): any[] {
+    const conflictos = error?.error?.Data;
+    return Array.isArray(conflictos) ? conflictos : [];
+  }
+
+  private validarTopeHorasAntesDePersistirCarga(
+    dataPlan: any,
+    rowData: any,
+    cargasNuevas: any[]
+  ): void {
+    const validacionHoras = validarHorasPlanDocentePorVinculacion(
+      dataPlan,
+      String(rowData?.tipo_vinculacion || "").trim()
+    );
+
+    if (!validacionHoras.codigoAbreviacion || validacionHoras.horasMaximas === null) {
+      throw new Error(this.translate.instant("ptd.error_validacion_horas_tipo_vinculacion"));
+    }
+
+    const horasNuevas = (cargasNuevas || []).reduce((acumulado: number, carga: any) => {
+      const horas = Number(carga?.horario?.horas ?? carga?.duracion ?? 0);
+      return acumulado + (Number.isNaN(horas) ? 0 : horas);
+    }, 0);
+
+    const totalHorasProyectado = validacionHoras.totalHoras + horasNuevas;
+    if (totalHorasProyectado > validacionHoras.horasMaximas) {
+      throw new Error(
+        this.translate.instant("ptd.error_validacion_horas_total_plan", {
+          horasRequeridas: validacionHoras.horasMaximas,
+          totalHoras: totalHorasProyectado,
+        })
+      );
+    }
+  }
+
+  private construirMensajeDetalladoCruces(conflictos: any[]): string {
+    return conflictos
+      .map((conflicto: any) => {
+        const espacioA = String(conflicto?.espacio_a || "").trim();
+        const espacioB = String(conflicto?.espacio_b || "").trim();
+        const dia = String(conflicto?.dia || "").trim();
+        const horaInicio = String(conflicto?.hora_inicio || "").trim();
+        const horaFin = String(conflicto?.hora_fin || "").trim();
+        const franja = `${horaInicio} - ${horaFin}`;
+
+        return `Conflicto de Horario: El espacio académico ${espacioA} se cruza con ${espacioB} el día ${dia} en la franja ${franja}.`;
+      })
+      .join("<br>");
   }
 
   private async marcarPreasignacionesComoAprobadasPorCoordinacion(rowData: any, espaciosAprobadosIds: string[] = []): Promise<boolean> {
