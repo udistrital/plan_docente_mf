@@ -357,7 +357,7 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
       const observacionMasiva = this.translate.instant('ptd.aprobacion_masiva_observacion');
 
       const respAprobacionMasiva: any = await firstValueFrom(
-        this.sgaPlanTrabajoDocenteMidService.put('plan/aprobacion_masiva', {
+        this.sgaPlanTrabajoDocenteMidService.put('plan/aprobacion-masiva', {
           plan_docente_ids: planDocenteIds,
           responsable_id: responsableId,
           observacion: observacionMasiva,
