@@ -599,7 +599,7 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
 
         const docente = detallePlan?.Data?.docente || {};
         const tipoVinculacion = Array.isArray(detallePlan?.Data?.tipo_vinculacion)
-          ? detallePlan.Data.tipo_vinculacion[0]
+          ? detallePlan.Data.tipo_vinculacion.find((vinc: any) => vinc.id === plan.tipo_vinculacion_id)
           : undefined;
         const estadoPlan = this.estadosPlan.opciones.find(
           (estado) => estado._id === plan.estado_plan_id
