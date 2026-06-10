@@ -12,6 +12,7 @@
       <mat-select
         [(ngModel)]="vinculacionSelected"
         (selectionChange)="selectVinculacion($event)"
+        [disabled]="deshabilitarVinculacion"
       >
         <mat-option>--{{ "GLOBAL.seleccionar" | translate }}--</mat-option>
         <mat-option *ngFor="let item of vinculaciones" [value]="item">

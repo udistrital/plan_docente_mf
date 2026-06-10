@@ -49,7 +49,7 @@
         <button
           mat-flat-button
           color="warn"
-          *ngIf="this.periodos.select && this.proyectos.select"
+          [disabled]="!periodos.select || !proyectos.select"
           (click)="filtrarPlanes()"
         >
           <mat-icon>refresh</mat-icon>

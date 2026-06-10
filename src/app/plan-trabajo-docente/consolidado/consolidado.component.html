@@ -71,7 +71,7 @@
           <div class="col-12">
             <button
               mat-stroked-button
-              *ngIf="this.periodos.select && this.proyectos.select"
+              [disabled]="!periodos.select || !proyectos.select"
               (click)="listarConsolidados()"
             >
               {{ "GLOBAL.actualizar" | translate }}

@@ -44,7 +44,7 @@
                 </div>
                 <div class="row mb-3 mt-3">
                     <div class="col-12">
-                        <button mat-stroked-button *ngIf="this.periodos.select && this.proyectos.select" (click)="listarConsolidados()"> {{ 'GLOBAL.actualizar' | translate }} </button>
+                        <button mat-stroked-button [disabled]="!periodos.select || !proyectos.select" (click)="listarConsolidados()"> {{ 'GLOBAL.actualizar' | translate }} </button>
                     </div>
                 </div>
 
