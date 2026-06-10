@@ -60,7 +60,7 @@
         <button
           mat-flat-button
           color="warn"
-          *ngIf="periodo.Id"
+          [disabled]="!proyecto || !periodo?.Id"
           (click)="loadAsignaciones()"
           [matTooltip]="'GLOBAL.actualizar' | translate"
         >

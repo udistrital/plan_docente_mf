@@ -951,7 +951,7 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
     this.dataSource.data = [];
     this.dataSource.filter = '';
     this.hasAttemptedToLoad = false;
-    if (this.periodo) {
+    if (this.periodo && this.periodo.Id) {
       this.verificarRangoFechas();
       if (!this.enRangoCalendario) {
         this.popUpManager.showErrorToast("El periodo seleccionado no se encuentra en el rango de fechas.");
