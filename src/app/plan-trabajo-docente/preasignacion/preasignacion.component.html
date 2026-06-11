@@ -60,7 +60,7 @@
         mat-flat-button
         extended
         color="warn"
-        [disabled]="!proyecto || !periodo?.Id"
+        [disabled]="!proyecto || !periodo.Id"
         (click)="loadPreasignaciones()"
         [matTooltip]="'GLOBAL.actualizar' | translate"
       >
@@ -234,7 +234,7 @@
         mat-flat-button
         extended
         color="warn"
-        [disabled]="!proyecto || !periodo?.Id"
+        [disabled]="!proyecto || !periodo.Id"
         (click)="loadPreasignaciones()"
         [matTooltip]="'GLOBAL.actualizar' | translate"
       >
