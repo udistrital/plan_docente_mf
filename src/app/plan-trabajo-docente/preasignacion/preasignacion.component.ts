@@ -588,50 +588,51 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
     }
   }
 
-  accionEditar(event: any) {
+  async accionEditar(event: any): Promise<void> {
+    // 1. Cláusula de guarda: Control de accesos
     if (!this.permisos['tabla_coordinador']) {
-      return this.popUpManager.showErrorToast(
-        this.translate.instant('GLOBAL.acceso_denegado')
-      );
+      this.popUpManager.showErrorToast(this.translate.instant('GLOBAL.acceso_denegado'));
+      return;
     }
 
-    const preasignacion = event["rowData"];
-    this.esPtdAprobado(preasignacion).then((ptdAprobado) => {
-      if (ptdAprobado) {
-        this.popUpManager.showErrorAlert(
-          this.translate.instant("ptd.no_editar_borrar_ptd_aprobado")
-        );
-        return;
-      }
+    const preasignacion = event?.["rowData"];
 
-      this.popUpManager
-        .showPopUpGeneric(
-          this.translate.instant("ptd.preasignacion"),
-          this.translate.instant("ptd.pregunta_editar"),
-          MODALS.INFO,
-          false
-        )
-        .then((action) => {
-          if (action.value) {
-            this.dialogConfig.data = preasignacion;
-            const preasignacionDialog = this.dialog.open(
-              DialogoPreAsignacionPtdComponent,
-              this.dialogConfig
-            );
-            preasignacionDialog.afterClosed().subscribe((result) => {
-              if (result) {
-                this.resetearAprobacionProyecto(preasignacion).then(() => {
-                  this.limpiarCargaPlanDePreasignacion(preasignacion).then(() => {
-                    this.loadPreasignaciones();
-                  });
-                });
-              } else {
-                this.loadPreasignaciones();
-              }
-            });
-          }
-        });
-    });
+    // 2. Cláusula de guarda: Validación de PTD aprobado
+    const ptdAprobado = await this.esPtdAprobado(preasignacion);
+    if (ptdAprobado) {
+      this.popUpManager.showErrorAlert(this.translate.instant("ptd.no_editar_borrar_ptd_aprobado"));
+      return;
+    }
+
+    // 3. Confirmación del usuario
+    const action = await this.popUpManager.showPopUpGeneric(
+      this.translate.instant("ptd.preasignacion"),
+      this.translate.instant("ptd.pregunta_editar"),
+      MODALS.INFO,
+      false
+    );
+
+    if (!action?.value) {
+      return;
+    }
+
+    // 4. Apertura del Diálogo (Se aplanó usando firstValueFrom)
+    this.dialogConfig.data = preasignacion;
+    const preasignacionDialog = this.dialog.open(
+      DialogoPreAsignacionPtdComponent,
+      this.dialogConfig
+    );
+
+    const result = await firstValueFrom(preasignacionDialog.afterClosed());
+
+    // 5. Procesamiento secuencial del resultado del diálogo
+    if (result) {
+      await this.resetearAprobacionProyecto(preasignacion);
+      await this.limpiarCargaPlanDePreasignacion(preasignacion);
+    }
+
+    // Se ejecuta en ambos casos (si cambia o si se cancela), eliminando el 'else' duplicado
+    this.loadPreasignaciones();
   }
 
   preguntarBorradoPreAsignacion(event: any) {
@@ -789,130 +790,108 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
       });
   }
 
-  loadPreasignaciones() {
+  async loadPreasignaciones(): Promise<void> {
     this.dataSource.filter = '';
 
+    // 1. Validaciones previas y de seguridad (Cláusulas de guarda)
     if (this.vistaActiva === 'coordinador') {
       if (!this.permisos['tabla_coordinador']) {
-        this.dataSource.data = [];
-        this.popUpManager.showErrorToast(
-          this.translate.instant('GLOBAL.acceso_denegado')
-        );
-        this.attachPaginatorAndSort();
+        this.manejarAccesoDenegado('GLOBAL.acceso_denegado');
         return;
       }
-
-      if (!this.proyecto || !this.proyecto.Codigo) {
-        this.dataSource.data = [];
-        this.popUpManager.showErrorToast(
-          this.translate.instant('GLOBAL.debe_seleccionar_proyecto')
-        );
-        this.attachPaginatorAndSort();
+      if (!this.proyecto?.Codigo) {
+        this.manejarAccesoDenegado('GLOBAL.debe_seleccionar_proyecto');
         return;
       }
-
-      this.planDocenteMid
-        .get(`preasignacion?vigencia=${this.periodo.Id}`)
-        .subscribe({
-          next: (resp: RespFormat) => {
-            this.hasAttemptedToLoad = true;
-            if (checkResponse(resp)) {
-              const datosFiltrados = (Array.isArray(resp.Data) ? resp.Data : []).filter((preasignacion: any) =>
-                String(preasignacion?.codigo_proyecto_academico || "").trim() === String(this.proyecto?.Codigo || "").trim()
-              );
-              this.dataSource.data = datosFiltrados.map((preasignacion: any) => ({
-                ...preasignacion,
-                aprobacion_docente: {
-                  ...preasignacion.aprobacion_docente,
-                  seleccionado: false,
-                },
-              }));
-              this.dataSource.paginator?.firstPage();
-            } else {
-              this.dataSource.data = [];
-              this.popUpManager.showErrorAlert(
-                this.translate.instant("ptd.error_aprobacion_preasignacion")
-              );
-            }
-            this.attachPaginatorAndSort();
-          },
-          error: () => {
-            this.hasAttemptedToLoad = true;
-            this.dataSource.data = [];
-            this.popUpManager.showErrorToast(
-              this.translate.instant("ptd.error_aprobacion_preasignacion")
-            );
-            this.attachPaginatorAndSort();
-          },
-        });
-      return;
-    }
-
-    if (this.vistaActiva === 'docente') {
+    } else if (this.vistaActiva === 'docente') {
       if (!this.permisos['tabla_docente']) {
-        this.dataSource.data = [];
-        this.popUpManager.showErrorToast(
-          this.translate.instant('GLOBAL.acceso_denegado')
-        );
-        this.attachPaginatorAndSort();
+        this.manejarAccesoDenegado('GLOBAL.acceso_denegado');
         return;
       }
-
-      this.userService
-        .getPersonaId()
-        .then((id_tercero) => {
-          this.planDocenteMid
-            .get(
-              "preasignacion/docente?docente=" +
-                id_tercero +
-                "&vigencia=" +
-                this.periodo.Id
-            )
-            .subscribe({
-              next: (resp: RespFormat) => {
-                this.hasAttemptedToLoad = true;
-                if (checkResponse(resp)) {
-                  this.dataSource.data = (Array.isArray(resp.Data) ? resp.Data : []).map((preasignacion: any) => ({
-                    ...preasignacion,
-                    aprobacion_docente: {
-                      ...preasignacion.aprobacion_docente,
-                      seleccionado: false,
-                    },
-                  }));
-                  this.dataSource.paginator?.firstPage();
-                } else {
-                  this.dataSource.data = [];
-                  this.popUpManager.showErrorAlert(
-                    this.translate.instant("ptd.error_no_found_preasignaciones")
-                  );
-                }
-                this.attachPaginatorAndSort();
-              },
-              error: () => {
-                this.hasAttemptedToLoad = true;
-                this.dataSource.data = [];
-                this.popUpManager.showErrorToast(
-                  this.translate.instant("ptd.error_no_found_preasignaciones")
-                );
-                this.attachPaginatorAndSort();
-              },
-            });
-        })
-        .catch(() => {
-          this.dataSource.data = [];
-          this.popUpManager.showErrorToast(
-            this.translate.instant("GLOBAL.error_no_found_tercero_id")
-          );
-          this.attachPaginatorAndSort();
-        });
+    } else {
+      this.manejarAccesoDenegado('GLOBAL.acceso_denegado');
       return;
     }
 
+    // 2. Orquestación de peticiones HTTP de forma síncrona/secuencial
+    try {
+      if (this.vistaActiva === 'coordinador') {
+        const resp = await firstValueFrom(
+          this.planDocenteMid.get(`preasignacion?vigencia=${this.periodo.Id}`)
+        );
+
+        if (checkResponse(resp)) {
+          const rawData = Array.isArray(resp.Data) ? resp.Data : [];
+          const datosFiltrados = rawData.filter((preasignacion: any) =>
+            String(preasignacion?.codigo_proyecto_academico || "").trim() === String(this.proyecto?.Codigo || "").trim()
+          );
+          
+          this.dataSource.data = this.mapearPreasignaciones(datosFiltrados);
+          this.dataSource.paginator?.firstPage();
+        } else {
+          this.manejarErrorCarga("ptd.error_aprobacion_preasignacion");
+        }
+
+      } else if (this.vistaActiva === 'docente') {
+        // Convertimos el viejo .then del userService en await nativo
+        const id_tercero = await this.userService.getPersonaId();
+        
+        const resp = await firstValueFrom(
+          this.planDocenteMid.get(`preasignacion/docente?docente=${id_tercero}&vigencia=${this.periodo.Id}`)
+        );
+
+        if (checkResponse(resp)) {
+          const rawData = Array.isArray(resp.Data) ? resp.Data : [];
+          this.dataSource.data = this.mapearPreasignaciones(rawData);
+          this.dataSource.paginator?.firstPage();
+        } else {
+          this.manejarErrorCarga("ptd.error_no_found_preasignaciones", true); // Con bandera de Alert
+        }
+      }
+    } catch (error) {
+      console.warn("Error cargando preasignaciones:", error);
+      this.dataSource.data = [];
+      
+      // Si falla el userService manejamos el error de tercero, de lo contrario error de preasignaciones
+      const mensajeError = this.vistaActiva === 'docente' && !this.dataSource.data.length
+        ? "GLOBAL.error_no_found_tercero_id"
+        : this.vistaActiva === 'coordinador' 
+          ? "ptd.error_aprobacion_preasignacion" 
+          : "ptd.error_no_found_preasignaciones";
+          
+      this.popUpManager.showErrorToast(this.translate.instant(mensajeError));
+      throw error; // Propagamos el error para que el try-catch de selectPeriodo actúe de ser necesario
+    } finally {
+      this.hasAttemptedToLoad = true;
+      this.attachPaginatorAndSort();
+    }
+  }
+
+  // --- Métodos auxiliares privados para mantener el código DRY y limpio ---
+
+  private mapearPreasignaciones(datos: any[]): any[] {
+    return datos.map((preasignacion: any) => ({
+      ...preasignacion,
+      aprobacion_docente: {
+        ...preasignacion.aprobacion_docente,
+        seleccionado: false,
+      },
+    }));
+  }
+
+  private manejarAccesoDenegado(llaveTraduccion: string): void {
     this.dataSource.data = [];
-    this.popUpManager.showErrorToast(
-      this.translate.instant("GLOBAL.acceso_denegado")
-    );
+    this.popUpManager.showErrorToast(this.translate.instant(llaveTraduccion));
     this.attachPaginatorAndSort();
+  }
+
+  private manejarErrorCarga(llaveTraduccion: string, usarAlert: boolean = false): void {
+    this.dataSource.data = [];
+    if (usarAlert) {
+      this.popUpManager.showErrorAlert(this.translate.instant(llaveTraduccion));
+    } else {
+      this.popUpManager.showErrorToast(this.translate.instant(llaveTraduccion));
+    }
   }
 
   cargarPeriodo(): Promise<Periodo[]> {

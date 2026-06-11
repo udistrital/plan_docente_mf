@@ -170,40 +170,50 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
     });
   }
 
-  cargarProyectosFacultadDecano(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      this.userService.getUserDocument().then((documento) => {
-        if (!documento) {
-          reject(new Error('No se pudo obtener documento del usuario'));
-          return;
-        }
+  async cargarProyectosFacultadDecano(): Promise<void> {
+    try {
+      // 1. Obtención síncrona del documento del usuario
+      const documento = await this.userService.getUserDocument();
+      if (!documento) {
+        throw new Error('No se pudo obtener documento del usuario');
+      }
 
-        this.sgaPlanTrabajoDocenteMidService.get(`calendario/proyectos_facultad_decano?documento=${documento}`).subscribe({
-          next: (resp: any) => {
-            if (checkContent(resp)) {
-              const proyectos = Array.isArray(resp.Data) ? resp.Data : [];
-              this.proyectos.opciones = proyectos
-                .map((proyecto: any) => ({
-                  Id: String(proyecto.Id ?? proyecto.Codigo ?? '').trim(),
-                  Codigo: String(proyecto.Codigo ?? proyecto.Id ?? '').trim(),
-                  Nombre: String(proyecto.Nombre ?? '').trim(),
-                  CodigoFacultad: String(proyecto.CodigoFacultad ?? '').trim(),
-                  Facultad: String(proyecto.Facultad ?? '').trim(),
-                  Nivel: String(proyecto.Nivel ?? '').trim(),
-                }))
-                .filter((proyecto: any) => proyecto.Id && proyecto.Nombre);
-              resolve();
-            } else {
-              reject(new Error('No se encontraron proyectos para la facultad del decano'));
-            }
-          },
-          error: (err: any) => {
-            console.warn('Error obteniendo calendario/proyectos_facultad_decano:', err);
-            reject(err);
-          }
-        });
-      }).catch(reject);
-    });
+      // 2. Consumo asíncrono del MID Service
+      const resp: any = await firstValueFrom(
+        this.sgaPlanTrabajoDocenteMidService.get(
+          `calendario/proyectos_facultad_decano?documento=${documento}`
+        )
+      );
+
+      // 3. Validación de contenido de la respuesta
+      if (!checkContent(resp)) {
+        throw new Error('No se encontraron proyectos para la facultad del decano');
+      }
+
+      // 4. Mapeo y filtrado limpio de los datos (Estructura interna plana)
+      const proyectosRaw = Array.isArray(resp.Data) ? resp.Data : [];
+      
+      this.proyectos.opciones = proyectosRaw
+        .map((proyecto: any) => this.mapearProyecto(proyecto))
+        .filter((proyecto: any) => proyecto.Id && proyecto.Nombre);
+
+    } catch (err) {
+      console.warn('Error en cargarProyectosFacultadDecano:', err);
+      // Lanzamos el error para mantener la firma semántica del 'reject' original
+      throw err; 
+    }
+  }
+
+  // Método auxiliar privado para delegar la responsabilidad del mapeo (Clean Code)
+  private mapearProyecto(proyecto: any): any {
+    return {
+      Id: String(proyecto.Id ?? proyecto.Codigo ?? '').trim(),
+      Codigo: String(proyecto.Codigo ?? proyecto.Id ?? '').trim(),
+      Nombre: String(proyecto.Nombre ?? '').trim(),
+      CodigoFacultad: String(proyecto.CodigoFacultad ?? '').trim(),
+      Facultad: String(proyecto.Facultad ?? '').trim(),
+      Nivel: String(proyecto.Nivel ?? '').trim(),
+    };
   }
 
   filtrarPeriodosPorCalendario() {

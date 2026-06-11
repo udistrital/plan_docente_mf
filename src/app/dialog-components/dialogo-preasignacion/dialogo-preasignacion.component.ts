@@ -1074,80 +1074,96 @@ export class DialogoPreAsignacionPtdComponent implements OnInit {
     }
   }
 
-  loadProyectos() {
+  loadProyectos(): Promise<any> {
     this.preasignacionForm.get("proyecto")?.setValue(null);
     this.opcionesGrupos = [];
     this.opcionesProyectos = [];
     this.limpiarResumenHorarioEspacio();
+
     return new Promise((resolve, reject) => {
-      if (this.preasignacionForm.get("espacio_academico")?.value != null) {
-        this.espacio_academico =
-          this.preasignacionForm.get("espacio_academico")?.value;
-        this.preasignacionForm
-          .get("codigo")
-          ?.setValue(this.espacio_academico.codigo);
-        this.preasignacionForm.get("grupo")?.enable();
-        this.preasignacionForm.get("proyecto")?.enable();
-        this.preasignacionForm.get("nivel")?.enable();
+      // Cláusula de guarda: Si no hay espacio académico, limpiamos y rechazamos de inmediato
+      if (this.preasignacionForm.get("espacio_academico")?.value == null) {
+        this.limpiarFormularioPorFaltaDeEspacio();
+        return reject(this.opcionesGrupos);
+      }
 
-        const partesPeriodo = this.obtenerPartesPeriodo(this.periodo);
-        if (!partesPeriodo) {
-          this.popUpManager.showErrorAlert(
-            this.translate.instant("ptd.error_no_found_proyectos")
-          );
-          reject(this.opcionesGrupos);
-          return;
+      this.espacio_academico = this.preasignacionForm.get("espacio_academico")?.value;
+      this.configurarFormularioActivo();
+
+      const partesPeriodo = this.obtenerPartesPeriodo(this.periodo);
+      if (!partesPeriodo) {
+        this.popUpManager.showErrorAlert(this.translate.instant("ptd.error_no_found_proyectos"));
+        return reject(this.opcionesGrupos);
+      }
+
+      this.consultarGruposPeriodo(partesPeriodo, resolve);
+    });
+  }
+
+  /**
+   * Configura los campos del formulario cuando el espacio académico es válido.
+   */
+  private configurarFormularioActivo(): void {
+    this.preasignacionForm.get("codigo")?.setValue(this.espacio_academico.codigo);
+    this.preasignacionForm.get("grupo")?.enable();
+    this.preasignacionForm.get("proyecto")?.enable();
+    this.preasignacionForm.get("nivel")?.enable();
+  }
+
+  /**
+   * Limpia y deshabilita los campos si no se ha seleccionado un espacio académico.
+   */
+  private limpiarFormularioPorFaltaDeEspacio(): void {
+    this.preasignacionForm.get("codigo")?.setValue(null);
+    this.preasignacionForm.get("grupo")?.disable();
+    this.preasignacionForm.get("proyecto")?.disable();
+    this.preasignacionForm.get("nivel")?.disable();
+  }
+
+  /**
+   * Realiza la petición HTTP al servicio de planes de trabajo.
+   */
+  private consultarGruposPeriodo(partesPeriodo: any, resolve: (value: any) => void): void {
+    const endpoint = `espacio-academico/grupos-periodo?anio=${partesPeriodo.anio}&periodo=${partesPeriodo.periodo}&espacio=${this.espacio_academico._id}`;
+    
+    this.sgaPlanTrabajoDocenteMidService.get(endpoint).subscribe({
+      next: (resp: any) => {
+        if (resp.Success && resp.Data != null) {
+          this.opcionesGruposTodas = resp.Data;
+          this.opcionesProyectos = [];
+          
+          this.procesarProyectosDocentes(resp.Data);
+          resolve(this.opcionesGrupos);
+        } else {
+          this.popUpManager.showAlert("", this.translate.instant("ptd.mensaje_espacio_sin_grupos"));
         }
-
-        this.sgaPlanTrabajoDocenteMidService
-          .get(
-            `espacio-academico/grupos-periodo?anio=${partesPeriodo.anio}` +
-            `&periodo=${partesPeriodo.periodo}&espacio=${this.espacio_academico._id}`
-          )
-          .subscribe({
-            next: (resp: any) => {
-              if (resp.Success == true && resp.Data != null) {
-                /*this.opcionesGrupos = resp.Data;*/
-                this.opcionesGruposTodas = resp.Data;
-                this.opcionesProyectos = [];
-                resp.Data.forEach((element: any) => {
-                  const nombreGrupo = String(element.ProyectoAcademico)
-                    .trim()
-                    .toUpperCase();
-                  const perteneceAlCoordinador = this.proyectosCoordinador.some(
-                    (proyecto) =>
-                      String(proyecto.nombre_carrera)
-                        .trim()
-                        .toUpperCase() === nombreGrupo
-                  );
-                  if (perteneceAlCoordinador) {
-                    // Evitar duplicados en opciones
-                    const yaExiste = this.opcionesProyectos.some(
-                      (opcion) =>
-                        String(opcion).trim().toUpperCase() === nombreGrupo
-                    );
-                    if (!yaExiste) {
-                      this.opcionesProyectos.push(element.ProyectoAcademico);
-                    }
-                  }
-                });
-                resolve(this.opcionesGrupos);
-              } else {
-                this.popUpManager.showAlert(
-                  "",
-                  this.translate.instant("ptd.mensaje_espacio_sin_grupos")
-                );
-              }
-            },
-          });
-      } else {
-        this.preasignacionForm.get("codigo")?.setValue(null);
-        this.preasignacionForm.get("grupo")?.disable();
-        this.preasignacionForm.get("proyecto")?.disable();
-        this.preasignacionForm.get("nivel")?.disable();
-        reject(this.opcionesGrupos);
       }
     });
+  }
+
+  /**
+   * Filtra y procesa los proyectos académicos del coordinador evitando duplicados.
+   */
+  private procesarProyectosDocentes(data: any[]): void {
+    data.forEach((element: any) => {
+      const nombreGrupo = String(element.ProyectoAcademico).trim().toUpperCase();
+      
+      if (this.esProyectoDelCoordinador(nombreGrupo) && !this.existeProyectoEnOpciones(nombreGrupo)) {
+        this.opcionesProyectos.push(element.ProyectoAcademico);
+      }
+    });
+  }
+
+  private esProyectoDelCoordinador(nombreGrupo: string): boolean {
+    return this.proyectosCoordinador.some(
+      (proyecto) => String(proyecto.nombre_carrera).trim().toUpperCase() === nombreGrupo
+    );
+  }
+
+  private existeProyectoEnOpciones(nombreGrupo: string): boolean {
+    return this.opcionesProyectos.some(
+      (opcion) => String(opcion).trim().toUpperCase() === nombreGrupo
+    );
   }
 
   changeProyecto() {
@@ -1197,81 +1213,78 @@ export class DialogoPreAsignacionPtdComponent implements OnInit {
     }
   }
 
-  loadPreasignacion() {
-    this.tercerosService
-      .get(
-        `datos_identificacion?query=TerceroId.Id:${this.data.docente_id},Activo:true&fields=Numero`
-      )
-      .subscribe((res: any) => {
+  async loadPreasignacion(): Promise<void> {
+    const endpoint = `datos_identificacion?query=TerceroId.Id:${this.data.docente_id},Activo:true&fields=Numero`;
+
+    this.tercerosService.get(endpoint).subscribe({
+      next: async (res: any) => {
         this.preasignacionForm.get("doc_docente")?.setValue(res[0].Numero);
         this.buscarDocenteDocumento(null);
 
-        // Cargar el periodo seleccionado
-        const periodoSeleccionado = this.periodos.find(
-          (periodo) => periodo.Id == this.data.periodo_id
-        );
-
+        // 1. Buscar y validar el periodo
+        const periodoSeleccionado = this.periodos.find(p => p.Id == this.data.periodo_id);
+        
         if (periodoSeleccionado) {
-          this.periodo = periodoSeleccionado; // Asignar el periodo actual
-          this.cargarEspaciosAcademicos(periodoSeleccionado)
-            .then((espaciosAcademicos) => {
-              this.opcionesEspaciosAcademicos = espaciosAcademicos;
-              this.preasignacionForm
-                .get("periodo")
-                ?.setValue(periodoSeleccionado, { emitEvent: false });
-              this.preasignacionForm
-                .get("espacio_academico")
-                ?.setValue(
-                  this.opcionesEspaciosAcademicos.find(
-                    (espacio) => espacio._id == this.data.espacio_academico_padre
-                  )
-                );
-
-              this.loadProyectos().then((res: any) => {
-                // Encontrar el grupo a cargar
-                const grupoACargar = this.opcionesGruposTodas.find(
-                  (grupo) => grupo.Id == this.data.espacio_academico_id
-                );
-
-                if (grupoACargar) {
-                  // Establecer el proyecto del grupo
-                  this.preasignacionForm
-                    .get("proyecto")
-                    ?.setValue(grupoACargar.ProyectoAcademico);
-
-                  // Filtrar los grupos al proyecto del grupo cargado
-                  this.changeProyecto();
-
-                  // Ahora asignar el grupo del filtered list
-                  this.preasignacionForm
-                    .get("grupo")
-                    ?.setValue(grupoACargar);
-                } else {
-                  // Fallback: asignar del todos si no encuentra filtrado
-                  this.preasignacionForm
-                    .get("grupo")
-                    ?.setValue(
-                      this.opcionesGruposTodas.find(
-                        (grupo) => grupo.Id == this.data.espacio_academico_id
-                      )
-                    );
-                }
-
-                this.changeGrupo();
-              });
-            })
-            .catch(() => {
-              this.opcionesEspaciosAcademicos = [];
-              this.popUpManager.showErrorToast(
-                this.translate.instant("ERROR.sin_espacios_academicos")
-              );
-            });
+          this.periodo = periodoSeleccionado;
+          await this.procesarEspaciosYProyectos(periodoSeleccionado);
         }
 
+        // 2. Asignar tipo de vinculación al finalizar el flujo principal
         this.preasignacionForm
           .get("tipo_vinculacion")
           ?.setValue(parseInt(this.data.tipo_vinculacion_id));
-      });
+      }
+    });
+  }
+
+  /**
+   * Maneja de forma lineal la carga de espacios académicos y proyectos
+   */
+  private async procesarEspaciosYProyectos(periodo: any): Promise<void> {
+    try {
+      // Cargar espacios académicos
+      this.opcionesEspaciosAcademicos = await this.cargarEspaciosAcademicos(periodo);
+      
+      this.preasignacionForm.get("periodo")?.setValue(periodo, { emitEvent: false });
+      
+      const espacioPadre = this.opcionesEspaciosAcademicos.find(
+        (espacio) => espacio._id == this.data.espacio_academico_padre
+      );
+      this.preasignacionForm.get("espacio_academico")?.setValue(espacioPadre);
+
+      // Esperar a que se carguen los proyectos
+      await this.loadProyectos();
+      
+      // Procesar la asignación del grupo
+      this.asignarGrupo();
+      
+    } catch (error) {
+      this.opcionesEspaciosAcademicos = [];
+      this.popUpManager.showErrorToast(this.translate.instant("ERROR.sin_espacios_academicos"));
+    }
+  }
+
+  /**
+   * Busca el grupo correspondiente y aplica las reglas de negocio/fallbacks
+   */
+  private asignarGrupo(): void {
+    const grupoACargar = this.opcionesGruposTodas.find(
+      (grupo) => grupo.Id == this.data.espacio_academico_id
+    );
+
+    if (grupoACargar) {
+      this.preasignacionForm.get("proyecto")?.setValue(grupoACargar.ProyectoAcademico);
+      this.changeProyecto();
+      this.preasignacionForm.get("grupo")?.setValue(grupoACargar);
+    } else {
+      // Fallback: asignar desde el listado general si no se encuentra
+      const grupoFallback = this.opcionesGruposTodas.find(
+        (grupo) => grupo.Id == this.data.espacio_academico_id
+      );
+      this.preasignacionForm.get("grupo")?.setValue(grupoFallback);
+    }
+
+    this.changeGrupo();
   }
 
   get isEspacioModular(): boolean {
