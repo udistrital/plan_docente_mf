@@ -116,25 +116,40 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
     this.respuestaConsolidado = false;
   }
 
-  async ngOnInit() {
+  async ngOnInit(): Promise<void> {
     this.popUpManager.showLoading();
+    
     try {
+      // Espera real del evento y cálculo de fechas del calendario
       await this.cargarEventoPTD();
+
+      // 1. Carga de roles corporativos
       const roles = await this.userService.getUserRoles();
       this.roles = roles;
-      const observables: { [key: string]: Observable<boolean> } = {};
-      this.opcionesPermisos.forEach(opcion => {
-        observables[opcion] =
-          this.permisosUtils.tienePermiso(roles, opcion);
-      });
-      const resultados = await firstValueFrom(forkJoin(observables));
-      this.permisos = resultados;
+
+      // 2. Mapeo optimizado de permisos
+      const observables: Record<string, Observable<boolean>> = this.opcionesPermisos.reduce((acc, opcion) => {
+        acc[opcion] = this.permisosUtils.tienePermiso(roles, opcion);
+        return acc;
+      }, {} as Record<string, Observable<boolean>>);
+
+      // 3. Resolución de la matriz de permisos
+      this.permisos = await firstValueFrom(forkJoin(observables));
       console.log("Permisos cargados:", this.permisos);
+
+      // Espera real a que los catálogos/selects estén mapeados en memoria
       await this.loadSelects();
+
+      // 4. Construcción del formulario con la certeza de tener toda la data previa cargada
       this.buildForms();
+
     } catch (err) {
-      this.popUpManager.showErrorAlert(this.translate.instant("ERROR.persiste_error_comunique_OAS"));
+      console.error("Error crítico durante el ngOnInit del componente PTD:", err);
+      this.popUpManager.showErrorAlert(
+        this.translate.instant("ERROR.persiste_error_comunique_OAS")
+      );
     } finally {
+      // El loading solo se cerrará cuando TODO el proceso asíncrono termine con éxito o falle.
       this.popUpManager.closeLoading();
     }
   }
@@ -151,27 +166,33 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
     return dataSource;
   }
 
-  cargarEventoPTD() {
-    this.sgaPlanTrabajoDocenteMidService.get("calendario/eventos").subscribe({
-      next: (resp: any) => {
-        if (checkContent(resp)) {
-          const eventos = Array.isArray(resp.Data) ? resp.Data : [];
-          const evento = eventos.find((e: any) => e.Descripcion === "PLANES DE TRABAJO DOCENTES");
-          if (evento) {
-            this.codigoEventoPTD = evento.CodigoEvento;
-            this.cargarCalendarioEventos().then(eventosCalendario => {
-              this.calendarEventosPTD = eventosCalendario;
-              this.resolverProyectosDesdeCalendario();
-              this.verificarRangoFechas();
-              this.intentarListarConsolidados();
-            }).catch(err => console.warn(err));
-          }
+  async cargarEventoPTD(): Promise<void> {
+    try {
+      const resp: any = await firstValueFrom(
+        this.sgaPlanTrabajoDocenteMidService.get("calendario/eventos")
+      );
+
+      if (checkContent(resp)) {
+        const eventos = Array.isArray(resp.Data) ? resp.Data : [];
+        const evento = eventos.find((e: any) => e.Descripcion === "PLANES DE TRABAJO DOCENTES");
+        
+        if (evento) {
+          this.codigoEventoPTD = evento.CodigoEvento;
+          
+          // Esperamos limpiamente la resolución de la promesa interna
+          const eventosCalendario = await this.cargarCalendarioEventos();
+          this.calendarEventosPTD = eventosCalendario;
+          
+          this.resolverProyectosDesdeCalendario();
+          this.verificarRangoFechas();
+          this.intentarListarConsolidados();
         }
-      },
-      error: (err: any) => {
-        console.warn("Error obteniendo calendario/eventos:", err);
       }
-    });
+    } catch (err) {
+      console.warn("Error obteniendo calendario/eventos:", err);
+      // Propagamos el error para que el try-catch de ngOnInit lo capture y muestre la alerta
+      throw err; 
+    }
   }
 
   cargarCalendarioEventos(): Promise<any[]> {
@@ -468,31 +489,28 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
     });
   }
 
-  async loadSelects() {
+  async loadSelects(): Promise<void> {
     try {
-      let promesas: Promise<void>[] = [];
-      promesas.push(
-        this.loadPeriodo().then((periodos) => {
-          this.periodos.opciones = periodos;
-          this._todosLosPeriodos = [...periodos];
-        }),
-        this.cargarEstadosConsolidado().then((estadosConsolidado) => {
-          this.estadosConsolidado.opciones = estadosConsolidado;
-        })
-      );
-      await Promise.all(promesas);
+      // Ejecución limpia en paralelo de las promesas nativas del servicio
+      const [periodos, estadosConsolidado] = await Promise.all([
+        this.loadPeriodo(),
+        this.cargarEstadosConsolidado()
+      ]);
+
+      this.periodos.opciones = periodos;
+      this._todosLosPeriodos = [...periodos];
+      this.estadosConsolidado.opciones = estadosConsolidado;
+
     } catch (error) {
-      console.warn(error);
+      console.warn("Error cargando catálogos de selección:", error);
       this.popUpManager.showPopUpGeneric(
         this.translate.instant("ERROR.titulo_generico"),
-        this.translate.instant("ERROR.sin_informacion_en") +
-        ": <b>" +
-        error +
-        "</b>.<br><br>" +
-        this.translate.instant("ERROR.persiste_error_comunique_OAS"),
+        `${this.translate.instant("ERROR.sin_informacion_en")}: <b>${error}</b>.<br><br>${this.translate.instant("ERROR.persiste_error_comunique_OAS")}`,
         MODALS.ERROR,
         false
       );
+      // Propagamos para asegurar el flujo controlado en ngOnInit si se requiere
+      throw error;
     }
   }
 
