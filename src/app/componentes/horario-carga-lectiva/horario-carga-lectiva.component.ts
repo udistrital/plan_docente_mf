@@ -84,6 +84,7 @@ export class HorarioCargaLectivaComponent implements OnInit, OnChanges {
   @Input() WorkingMode: Symbol = Symbol();
   @Input() Rol: string = "";
   @Input() Data: any = undefined;
+  @Input() VigenciaActiva: boolean = true;
   @Output() OutLoading: EventEmitter<boolean> = new EventEmitter();
   @Output() DataChanged: EventEmitter<any> = new EventEmitter();
 
@@ -143,6 +144,10 @@ export class HorarioCargaLectivaComponent implements OnInit, OnChanges {
       : planDocente;
     const isDisabled = !!(planId && String(planId).trim() !== "" && String(planId).trim() !== "0");
     return isDisabled;
+  }
+
+  get esModoVistaLecturaEstricta(): boolean {
+    return this.WorkingMode === ACTIONS.VIEW && !this.VigenciaActiva;
   }
 
   constructor(
@@ -1203,7 +1208,7 @@ export class HorarioCargaLectivaComponent implements OnInit, OnChanges {
 
   async guardar_ptd() {
     const periodoId = this.Data.vigencia;
-    if (!this.puedeEditarPTD) {
+    if (!this.puedeEditarPTD || this.esModoVistaLecturaEstricta) {
       this.popUpManager.showAlert(
         this.translate.instant("ptd.guardado_ptd_error"),
         this.translate.instant("ptd.guardado_ptd_error_msg")
@@ -1605,7 +1610,7 @@ export class HorarioCargaLectivaComponent implements OnInit, OnChanges {
   }
 
   bloquearElementosTabla(): void {
-    if (!this.puedeEditarPTD || this.WorkingMode === ACTIONS.VIEW) {
+    if (!this.puedeEditarPTD || this.esModoVistaLecturaEstricta) {
       this.listaCargaLectiva.forEach((element) => {
         element.bloqueado = true;
       });

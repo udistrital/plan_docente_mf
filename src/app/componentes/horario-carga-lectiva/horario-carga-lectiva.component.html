@@ -1,5 +1,5 @@
 <!-- Selector de carga o actividad segun rol -->
-<div class="margin-y" *ngIf="(isCoordinador || isDocente) && puedeEditarPTD">
+<div class="margin-y" *ngIf="(isCoordinador || isDocente) && puedeEditarPTD && !esModoVistaLecturaEstricta">
   <h3 class="margin-y" *ngIf="isCoordinador">
     {{ "ptd.select_carga_lectiva" | translate }}
   </h3>
@@ -65,7 +65,7 @@
 </div>
 
 <!-- EDITAR  -->
-<ng-container *ngIf="puedeEditarPTD">
+<ng-container *ngIf="puedeEditarPTD && !esModoVistaLecturaEstricta">
   <div id="ubicacion" [hidden]="!ubicacionActive">
     <h4 class="margin-y">{{ "ptd.espacio_fisico" | translate }}</h4>
     <form
@@ -524,7 +524,7 @@
   <mat-form-field class="form-field">
     <div
       id="dropzone"
-      *ngIf="isDocente && puedeEditarPTD"
+      *ngIf="isDocente && puedeEditarPTD && !esModoVistaLecturaEstricta"
       (drop)="onDrop($event)"
       (dragover)="onDragOver($event)"
     >
@@ -594,7 +594,7 @@
       [disabled]="isDocente || !puedeEditarPTD"
     ></textarea>
   </mat-form-field>
-  <div *ngIf="puedeEditarPTD" style="display: flex; justify-content: center">
+  <div *ngIf="puedeEditarPTD && !esModoVistaLecturaEstricta" style="display: flex; justify-content: center">
     <button
       mat-flat-button
       color="accent"

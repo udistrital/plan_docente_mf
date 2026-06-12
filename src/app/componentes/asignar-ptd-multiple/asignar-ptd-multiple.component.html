@@ -85,6 +85,7 @@
   [WorkingMode]="soloLectura ? ACTIONS.VIEW : canEdit"
   [Rol]="rolIs ? rolIs : rolesIs[0]"
   [Data]="detalleAsignacion"
+  [VigenciaActiva]="vigenciaActiva"
   (OutLoading)="doReload($event)"
   (DataChanged)="whatChanged($event)"
 ></horario-carga-lectiva>

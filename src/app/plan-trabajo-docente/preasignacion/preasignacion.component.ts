@@ -70,6 +70,18 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
     "editar",
     "borrar",
   ];
+  displayedColumns_coord_lectura: string[] = [
+    "docente",
+    "espacio_academico",
+    "periodo",
+    "grupo",
+    "proyecto",
+    "nivel",
+    "aprobacion_docente",
+    "aprobacion_proyecto",
+    "semaforo_preasignacion",
+    "ver_detalle",
+  ];
   @ViewChild('paginatorDocente') paginatorDocente!: MatPaginator;
   @ViewChild('paginatorCoord') paginatorCoord!: MatPaginator;
   @ViewChild('docenteSort') docenteSort!: MatSort;
@@ -274,10 +286,25 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
 
   cambiarVista(vista: 'docente' | 'coordinador') {
     this.vistaActiva = vista;
+    this.proyecto = null;
+    this.periodo = new Periodo({});
+    this.periodosFiltrados = [];
+    this.enRangoCalendario = false;
+    this.calendarEventoSeleccionado = null;
     this.dataSource.filter = '';
     this.dataSource.data = [];
     this.hasAttemptedToLoad = false;
     this.attachPaginatorAndSort();
+  }
+
+  esModoLecturaPorCalendario(): boolean {
+    return !!this.periodo?.Id && !this.enRangoCalendario;
+  }
+
+  get displayedColumnsCoordActual(): string[] {
+    return this.esModoLecturaPorCalendario()
+      ? this.displayedColumns_coord_lectura
+      : this.displayedColumns_coord;
   }
 
   private obtenerDocumentoCoordinador(): string | null {
@@ -318,14 +345,40 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
   }
 
   actualizarAprobacion(evento: any, campo: 'aprobacion_docente' | 'aprobacion_proyecto') {
+    if (this.esModoLecturaPorCalendario()) {
+      return;
+    }
+
+    if (campo === 'aprobacion_proyecto') {
+      this.dataSource.data = [...this.dataSource.data];
+      return;
+    }
+
     const fila = evento?.Data;
     if (!fila || !campo || !fila[campo]) {
       return;
     }
 
+    if (campo === 'aprobacion_docente') {
+      if (this.vistaActiva !== 'docente') {
+        this.dataSource.data = [...this.dataSource.data];
+        return;
+      }
+
+      const aprobadoEnBackend = !!fila[campo]?.aprobado_backend;
+      if (aprobadoEnBackend) {
+        if (!evento?.value) {
+          fila[campo].value = true;
+        }
+        this.dataSource.data = [...this.dataSource.data];
+        return;
+      }
+    }
+
     fila[campo].value = !!evento?.value;
     if (campo === 'aprobacion_docente') {
       fila[campo].seleccionado = !!evento?.value;
+      fila[campo].disabled = this.debeBloquearAprobacionDocente(!!fila[campo]?.aprobado_backend);
     }
     this.dataSource.data = [...this.dataSource.data];
   }
@@ -589,6 +642,11 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
   }
 
   async accionEditar(event: any): Promise<void> {
+    if (this.esModoLecturaPorCalendario()) {
+      this.popUpManager.showErrorToast("Modo lectura debido a restricciones de calendario");
+      return;
+    }
+
     // 1. Cláusula de guarda: Control de accesos
     if (!this.permisos['tabla_coordinador']) {
       this.popUpManager.showErrorToast(this.translate.instant('GLOBAL.acceso_denegado'));
@@ -636,6 +694,10 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
   }
 
   preguntarBorradoPreAsignacion(event: any) {
+    if (this.esModoLecturaPorCalendario()) {
+      return this.popUpManager.showErrorToast("Modo lectura debido a restricciones de calendario");
+    }
+
     if (!this.permisos['tabla_coordinador']) {
       return this.popUpManager.showErrorToast(
         this.translate.instant('GLOBAL.acceso_denegado')
@@ -730,6 +792,10 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
   }
 
   enviarAprobacion() {
+    if (this.esModoLecturaPorCalendario()) {
+      return this.popUpManager.showErrorToast("Modo lectura debido a restricciones de calendario");
+    }
+
     if (!this.permisos['aprobacion_docente']) {
       return this.popUpManager.showErrorToast(
         this.translate.instant('GLOBAL.acceso_denegado')
@@ -870,13 +936,40 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
   // --- Métodos auxiliares privados para mantener el código DRY y limpio ---
 
   private mapearPreasignaciones(datos: any[]): any[] {
+    const deshabilitarAcciones = this.esModoLecturaPorCalendario();
+
     return datos.map((preasignacion: any) => ({
+      // Se conserva si ya fue aprobado previamente para bloquear desmarcado posterior.
       ...preasignacion,
       aprobacion_docente: {
-        ...preasignacion.aprobacion_docente,
+        ...(typeof preasignacion.aprobacion_docente === "object"
+          ? preasignacion.aprobacion_docente
+          : { value: !!preasignacion.aprobacion_docente }),
         seleccionado: false,
+        aprobado_backend: this.getAprobacionValue(preasignacion.aprobacion_docente),
+        disabled: this.debeBloquearAprobacionDocente(
+          this.getAprobacionValue(preasignacion.aprobacion_docente)
+        ),
+      },
+      aprobacion_proyecto: {
+        ...(typeof preasignacion.aprobacion_proyecto === "object"
+          ? preasignacion.aprobacion_proyecto
+          : { value: !!preasignacion.aprobacion_proyecto }),
+        disabled: true,
       },
     }));
+  }
+
+  private debeBloquearAprobacionDocente(valorActual: boolean): boolean {
+    if (this.vistaActiva !== 'docente') {
+      return true;
+    }
+
+    if (this.esModoLecturaPorCalendario()) {
+      return true;
+    }
+
+    return valorActual;
   }
 
   private manejarAccesoDenegado(llaveTraduccion: string): void {
@@ -932,10 +1025,6 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
     this.hasAttemptedToLoad = false;
     if (this.periodo && this.periodo.Id) {
       this.verificarRangoFechas();
-      if (!this.enRangoCalendario) {
-        this.popUpManager.showErrorToast("El periodo seleccionado no se encuentra en el rango de fechas.");
-        return;
-      }
       this.popUpManager.showLoading();
       try {
         await this.loadPreasignaciones();
@@ -946,6 +1035,20 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
         this.popUpManager.closeLoading();
       }
     }
+  }
+
+  accionVerDetalle(event: any): void {
+    const preasignacion = event?.rowData;
+    if (!preasignacion) {
+      return;
+    }
+
+    this.dialogConfig.data = {
+      ...preasignacion,
+      readOnly: true,
+    };
+
+    this.dialog.open(DialogoPreAsignacionPtdComponent, this.dialogConfig);
   }
 
   // Función para determinar el estado del semáforo de preasignación
