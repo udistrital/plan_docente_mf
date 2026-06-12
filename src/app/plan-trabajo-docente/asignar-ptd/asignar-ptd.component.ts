@@ -302,6 +302,16 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
     }
   }
 
+  esModoLecturaPorCalendario(): boolean {
+    return !!this.periodo?.Id && !this.enRangoCalendario;
+  }
+
+  get displayedColumnsActual(): string[] {
+    return this.esModoLecturaPorCalendario()
+      ? this.displayedColumns.filter((column) => column !== "enviar")
+      : this.displayedColumns;
+  }
+
   applyFilter(event: Event) {
     const filterValue = (event.target as HTMLInputElement).value;
     this.dataSource.filter = filterValue.trim().toLowerCase();
@@ -323,7 +333,9 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
     }else if(this.vistaActiva == 'docente'){
       this.rolVista = ROLES.DOCENTE;
     }
-    if (event.rowData.gestion.type == "editar") {
+    if (this.esModoLecturaPorCalendario()) {
+      this.canEdit = ACTIONS.VIEW;
+    } else if (event.rowData.gestion.type == "editar") {
       this.canEdit = ACTIONS.EDIT;
     } else {
       this.canEdit = ACTIONS.VIEW;
@@ -375,6 +387,10 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
   }
 
   accionEnviar(event: any) {
+    if (this.esModoLecturaPorCalendario()) {
+      return;
+    }
+
     const canSendCoordinator = this.permisos['enviar_coordinador'];
     const canSendDocente = this.permisos['enviar_docente'];
     const coordinador = this.esCoordinadorAsignacion;
@@ -579,11 +595,16 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
           const preasignaciones = await this.cargarPreasignacionesPeriodo();
           this.preasignacionesPeriodo = preasignaciones;
 
+          const modoLectura = this.esModoLecturaPorCalendario();
           const data = (resp.Data || []).map((row: any) => {
             const semaforo = this.getSemaforoAsignacion(row, preasignaciones);
             const enviar = this.construirAccionEnviar(row, preasignaciones);
             const estado = row?.estado ? row.estado.toString().toLowerCase() : "";
             const isNoAprobado = estado.includes("no aprobado");
+
+            if (modoLectura && row.gestion) {
+              return { ...row, gestion: { ...row.gestion, type: "ver" }, semaforo, enviar };
+            }
 
             if (this.permisos['ver_gestion'] && (isNoAprobado || row.estado === "Enviado a docente") && row.gestion) {
               return { ...row, gestion: { ...row.gestion, type: "ver" }, semaforo, enviar };
@@ -608,11 +629,16 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
         const resp = await firstValueFrom(this.sgaPlanTrabajoDocenteMidService.get(url));
 
         if (checkResponse(resp) && checkContent(resp)) {
+          const modoLectura = this.esModoLecturaPorCalendario();
           const data = (resp.Data || []).map((row: any) => {
             const semaforo = this.getSemaforoAsignacion(row);
             const enviar = this.construirAccionEnviar(row);
             const estado = row?.estado ? row.estado.toString().toLowerCase() : "";
             const isNoAprobado = estado.includes("no aprobado");
+
+            if (modoLectura && row.gestion) {
+              return { ...row, gestion: { ...row.gestion, type: "ver" }, semaforo, enviar };
+            }
 
             if (this.permisos['ver_gestion'] && isNoAprobado && row.gestion) {
               return { ...row, gestion: { ...row.gestion, type: "ver" }, semaforo, enviar };
@@ -794,12 +820,6 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
 
     this.cargarPeriodosAnteriores(this.periodo);
     this.verificarRangoFechas();
-
-    if (!this.enRangoCalendario) {
-      this.hasAttemptedToLoad = true;
-      this.popUpManager.showErrorToast("El periodo seleccionado no se encuentra en el rango de fechas.");
-      return;
-    }
 
     this.popUpManager.showLoading();
 

@@ -89,6 +89,7 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
   calendarEventoSeleccionado: any = null;
   enRangoCalendario: boolean = false;
   _todosLosPeriodos: Periodo[] = [];
+  hasAttemptedToLoad = false;
 
   constructor(
     private userService: UserService,
@@ -230,9 +231,19 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
   }
 
   private intentarListarConsolidados() {
-    if (this.periodos.select && this.proyectos.select && this.enRangoCalendario) {
+    if (this.periodos.select && this.proyectos.select) {
       this.listarConsolidados();
     }
+  }
+
+  esModoLecturaPorCalendario(): boolean {
+    return !!this.periodos.select?.Id && !this.enRangoCalendario;
+  }
+
+  get displayedColumnsActual(): string[] {
+    return this.esModoLecturaPorCalendario()
+      ? this.displayedColumns.filter((column) => column !== "enviar")
+      : this.displayedColumns;
   }
 
   filtrarPeriodosPorCalendario() {
@@ -518,6 +529,7 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
     this.periodos.select = undefined;
     this.periodos.opciones = [];
     this.dataSource = this.configurarDataSource();
+    this.hasAttemptedToLoad = false;
     if (this.proyectos.select) {
       this.filtrarPeriodosPorCalendario();
     }
@@ -525,14 +537,9 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
 
   onPeriodoChange() {
     this.dataSource = this.configurarDataSource();
+    this.hasAttemptedToLoad = false;
     if (this.periodos.select) {
       this.verificarRangoFechas();
-      if (!this.enRangoCalendario) {
-        if (this.calendarEventosPTD.length > 0) {
-          this.popUpManager.showErrorToast("El periodo seleccionado no se encuentra en el rango de fechas.");
-        }
-        return;
-      }
       this.intentarListarConsolidados();
     }
   }
@@ -545,10 +552,6 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
       return;
     }
     this.verificarRangoFechas();
-    if (!this.enRangoCalendario) {
-      this.popUpManager.showErrorToast("El periodo seleccionado no se encuentra en el rango de fechas.");
-      return;
-    }
     if (this.periodos.select) {
       let proyecto = "";
       if (this.proyectos.select && !this.roles.includes(ROLES.DOCENTE)) {
@@ -577,6 +580,8 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
           const estadoConsolidado = this.estadosConsolidado.opciones.find(
             (estado) => estado._id == consolidado.estado_consolidado_id
           );
+          const codigoEstado = String(estadoConsolidado?.codigo_abreviacion || "");
+          const revisionDecanaturaHabilitada = codigoEstado === "APR" || codigoEstado === "N_APR";
           const proyecto = this.proyectos.opciones.find(
             (proyecto) => proyecto.Id == consolidado.proyecto_academico_id
           );
@@ -588,6 +593,7 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
             this.permisos['editar_gestion_consolidado'];
           let opcionGestion = "ver";
           if (
+            !this.esModoLecturaPorCalendario() &&
             estadoConsolidado &&
             (estadoConsolidado.codigo_abreviacion == "DEF" ||
               estadoConsolidado.codigo_abreviacion == "N_APR") &&
@@ -603,7 +609,7 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
             revision_decanatura: {
               value: undefined,
               type: "ver",
-              disabled: false,
+              disabled: !revisionDecanaturaHabilitada,
             },
             gestion: {
               value: undefined,
@@ -617,17 +623,21 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
               value: undefined,
               type: "enviar",
               disabled:
+                this.esModoLecturaPorCalendario() ||
                 !this.permisos['enviar_coordinador_consolidado'] ||
+                !estadoConsolidado ||
                 estadoConsolidado.codigo_abreviacion != "DEF",
             },
             ConsolidadoJson: consolidado,
           });
         });
-        this.dataSource = new MatTableDataSource(formatedData);
+        this.dataSource = this.configurarDataSource(formatedData);
       } catch (err) {
         console.warn(err);
-        this.dataSource = new MatTableDataSource();
+        this.dataSource = this.configurarDataSource();
         throw err;
+      } finally {
+        this.hasAttemptedToLoad = true;
       }
     }
   }

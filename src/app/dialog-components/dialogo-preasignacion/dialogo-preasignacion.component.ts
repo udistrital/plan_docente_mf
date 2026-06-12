@@ -55,6 +55,7 @@ const DIAS_SEMANA = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sáb
 })
 export class DialogoPreAsignacionPtdComponent implements OnInit {
   modificando: boolean = true;
+  readOnly: boolean = false;
   preasignacionForm: FormGroup;
   private proyectoCurricularId: number | null = null;
   roles: string[] = [];
@@ -185,6 +186,8 @@ export class DialogoPreAsignacionPtdComponent implements OnInit {
   }
 
   ngOnInit() {
+    this.readOnly = !!this.data?.readOnly;
+
     this.userService.getUserRoles().then(roles => {
       this.roles = roles;
     });
@@ -282,7 +285,7 @@ export class DialogoPreAsignacionPtdComponent implements OnInit {
             if (periodo.Activo) {
               this.periodo = periodo;
               this.verificarRangoFechas();
-              if (!this.enRangoCalendario) {
+              if (!this.enRangoCalendario && !this.readOnly) {
                 this.popUpManager.showErrorToast("El periodo seleccionado no se encuentra en el rango de fechas.");
                 return;
               }
@@ -339,6 +342,14 @@ export class DialogoPreAsignacionPtdComponent implements OnInit {
       });
 
     this.opcionesDocente = [];
+
+    if (this.readOnly) {
+      this.aplicarModoSoloLectura();
+    }
+  }
+
+  private aplicarModoSoloLectura(): void {
+    this.preasignacionForm.disable({ emitEvent: false });
   }
 
   private cargarTiposVinculacion() {
@@ -429,6 +440,10 @@ export class DialogoPreAsignacionPtdComponent implements OnInit {
   }
 
   enviarPreasignacion() {
+    if (this.readOnly) {
+      return;
+    }
+
     if (this.preasignacionForm.valid) {
       let request = {
         docente_id: String(this.docente.Id),
@@ -807,9 +822,11 @@ export class DialogoPreAsignacionPtdComponent implements OnInit {
               vinculacion_docente == vinculacion.id
           )
       );
-      this.preasignacionForm.get("codigo")?.enable();
-      this.preasignacionForm.get("espacio_academico")?.enable();
-      this.preasignacionForm.get("tipo_vinculacion")?.enable();
+      if (!this.readOnly) {
+        this.preasignacionForm.get("codigo")?.enable();
+        this.preasignacionForm.get("espacio_academico")?.enable();
+        this.preasignacionForm.get("tipo_vinculacion")?.enable();
+      }
     } else {
       this.preasignacionForm.get("codigo")?.disable();
       this.preasignacionForm.get("espacio_academico")?.disable();
@@ -994,6 +1011,10 @@ export class DialogoPreAsignacionPtdComponent implements OnInit {
   }
 
   buscarDocenteDocumento(event: any) {
+    if (this.readOnly && event) {
+      return;
+    }
+
     if (event) {
       event.preventDefault();
       event.stopPropagation();
@@ -1034,6 +1055,10 @@ export class DialogoPreAsignacionPtdComponent implements OnInit {
   }
 
   buscarEspacioAcademico(event: any) {
+    if (this.readOnly) {
+      return;
+    }
+
     if (event) {
       event.preventDefault();
       event.stopPropagation();
@@ -1105,9 +1130,11 @@ export class DialogoPreAsignacionPtdComponent implements OnInit {
    */
   private configurarFormularioActivo(): void {
     this.preasignacionForm.get("codigo")?.setValue(this.espacio_academico.codigo);
-    this.preasignacionForm.get("grupo")?.enable();
-    this.preasignacionForm.get("proyecto")?.enable();
-    this.preasignacionForm.get("nivel")?.enable();
+    if (!this.readOnly) {
+      this.preasignacionForm.get("grupo")?.enable();
+      this.preasignacionForm.get("proyecto")?.enable();
+      this.preasignacionForm.get("nivel")?.enable();
+    }
   }
 
   /**
@@ -1233,6 +1260,10 @@ export class DialogoPreAsignacionPtdComponent implements OnInit {
         this.preasignacionForm
           .get("tipo_vinculacion")
           ?.setValue(parseInt(this.data.tipo_vinculacion_id));
+
+        if (this.readOnly) {
+          this.aplicarModoSoloLectura();
+        }
       }
     });
   }
@@ -1293,6 +1324,10 @@ export class DialogoPreAsignacionPtdComponent implements OnInit {
   }
 
   abrirDialogoCrearEspacioGrupo(espacioAcademico: any) {
+    if (this.readOnly) {
+      return;
+    }
+
     const dialogRef = this.dialog.open(DialogoCrearEspacioGrupoComponent, {
       width: "50%",
       height: "auto",

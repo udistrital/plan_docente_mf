@@ -17,6 +17,10 @@
       </mat-toolbar>
 
       <h3 class="margin-y">{{ "ptd.list_docente" | translate }}</h3>
+      <div class="alert info" *ngIf="esModoLecturaPorCalendario()">
+        <mat-icon class="icon">lock</mat-icon>
+        Modo lectura debido a restricciones de calendario
+      </div>
       <div class="row">
         <div class="col-6">
           <mat-form-field class="form-field" style="width: 100%">
@@ -166,8 +170,8 @@
               ></action-button>
             </mat-cell>
           </ng-container>
-          <mat-header-row *matHeaderRowDef="displayedColumns"></mat-header-row>
-          <mat-row *matRowDef="let row; columns: displayedColumns"></mat-row>
+          <mat-header-row *matHeaderRowDef="displayedColumnsActual"></mat-header-row>
+          <mat-row *matRowDef="let row; columns: displayedColumnsActual"></mat-row>
         </mat-table>
         <mat-paginator
           [pageSizeOptions]="[5, 10, 25, 100]"
@@ -196,6 +200,8 @@
           [dataDocente]="dataDocente"
           [detalleAsignacion]="detalleAsignacion"
           [periodosAnteriores]="periodosAnteriores"
+          [soloLectura]="esModoLecturaPorCalendario()"
+          [vigenciaActiva]="enRangoCalendario"
           [selectedView]="rolVista"
         ></asignar-ptd-multiple>
       </ng-container>
@@ -208,6 +214,7 @@
               [detalleAsignacion]="detallesGeneral"
               [periodosAnteriores]="periodosAnteriores"
               [soloLectura]="true"
+              [vigenciaActiva]="enRangoCalendario"
               [selectedView]="rolVista"
             ></asignar-ptd-multiple>
           </mat-tab>
@@ -217,6 +224,8 @@
               [detalleAsignacion]="detalleAsignacion"
               [periodosAnteriores]="periodosAnteriores"
               (OutDetalleChanged)="manageChangesInGeneralPTD($event)"
+              [soloLectura]="esModoLecturaPorCalendario()"
+              [vigenciaActiva]="enRangoCalendario"
               [selectedView]="rolVista"
             ></asignar-ptd-multiple>
           </mat-tab>
@@ -234,6 +243,7 @@
                 [periodosAnteriores]="periodosAnteriores"
                 (OutDetalleChanged)="manageChangesInGeneralPTD($event)"
                 [soloLectura]="true"
+                [vigenciaActiva]="enRangoCalendario"
                 [selectedView]="rolVista"
               ></asignar-ptd-multiple>
             </mat-tab>
@@ -246,6 +256,7 @@
                   [detalleAsignacion]="detallesGeneral"
                   [periodosAnteriores]="periodosAnteriores"
                   [soloLectura]="true"
+                  [vigenciaActiva]="enRangoCalendario"
                   [selectedView]="rolVista"
                 ></asignar-ptd-multiple>
               </mat-tab>
@@ -255,6 +266,7 @@
                   [detalleAsignacion]="detallesGeneral"
                   [periodosAnteriores]="periodosAnteriores"
                   [soloLectura]="true"
+                  [vigenciaActiva]="enRangoCalendario"
                   [selectedView]="rolVista"
                 ></asignar-ptd-multiple>
               </mat-tab>

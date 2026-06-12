@@ -263,7 +263,7 @@
                     preasignacionForm.get('espacio_academico')?.value
                   )
                 "
-                *ngIf="preasignacionForm.get('espacio_academico')?.value"
+                *ngIf="preasignacionForm.get('espacio_academico')?.value && !readOnly"
               >
                 <button
                   mat-stroked-button
@@ -334,6 +334,7 @@
             {{ "GLOBAL.cancelar" | translate }}
           </button>
           <button
+            *ngIf="!readOnly"
             mat-raised-button
             color="primary"
             (click)="enviarPreasignacion()"
