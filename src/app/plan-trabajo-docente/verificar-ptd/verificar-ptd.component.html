@@ -58,7 +58,7 @@
         <button
           mat-flat-button
           color="primary"
-          *ngIf="this.periodos.select && this.proyectos.select"
+          *ngIf="this.periodos.select && this.proyectos.select && !esModoLecturaPorCalendario()"
           (click)="aprobarSeleccionados()"
           [disabled]="bulkApprovalInProgress || !hayPlanesSeleccionados()"
         >
@@ -66,6 +66,16 @@
           {{ "ptd.aprobar_seleccionados" | translate }}
         </button>
       </mat-toolbar>
+
+      <div class="alert info" *ngIf="esModoLecturaPorCalendario()">
+        <mat-icon class="icon">lock</mat-icon>
+        Modo lectura debido a restricciones de calendario
+      </div>
+
+      <div *ngIf="hasAttemptedToLoad && sinDatosParaMostrar" class="margin-y alert info">
+        <mat-icon class="icon">sentiment_very_dissatisfied</mat-icon>
+        {{ "ptd.sin_asignaciones_de_carga_academica_por_periodo" | translate }}
+      </div>
 
       <div class="margin-y">
         <mat-form-field class="form-field">
@@ -81,7 +91,7 @@
                   [checked]="isAllSelected()"
                   [indeterminate]="selection.hasValue() && !isAllSelected()"
                   (change)="toggleAllRows()"
-                  [disabled]="bulkApprovalInProgress || dataSource.data.length === 0"
+                  [disabled]="bulkApprovalInProgress || dataSource.data.length === 0 || esModoLecturaPorCalendario()"
                 ></mat-checkbox>
               </mat-header-cell>
               <mat-cell *matCellDef="let row">
@@ -89,7 +99,7 @@
                   color="primary"
                   [checked]="selection.isSelected(row)"
                   (change)="toggleFila(row)"
-                  [disabled]="bulkApprovalInProgress || !esPlanAprobable(row)"
+                  [disabled]="bulkApprovalInProgress || !esPlanAprobable(row) || esModoLecturaPorCalendario()"
                 ></mat-checkbox>
               </mat-cell>
             </ng-container>
@@ -232,7 +242,12 @@
         </form>
       </div>
       <!-- horario ptd -->
-      <horario-carga-lectiva [Data]="infoPlan"></horario-carga-lectiva>
+      <horario-carga-lectiva
+        [Data]="infoPlan"
+        [WorkingMode]="ACTIONS.VIEW"
+        [Rol]="isCoordinator || ''"
+        [VigenciaActiva]="enRangoCalendario"
+      ></horario-carga-lectiva>
       <!-- info verificar -->
       <div>
         <h4>{{ "ptd.verif_plan" | translate }}</h4>
@@ -290,7 +305,7 @@
               </mat-form-field>
             </div>
           </div>
-          <div class="ancho-100 posicion-centro">
+          <div class="ancho-100 posicion-centro" *ngIf="!modoSoloVista">
             <button
               mat-raised-button
               color="primary"

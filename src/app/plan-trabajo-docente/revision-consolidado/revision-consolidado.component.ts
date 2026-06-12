@@ -67,6 +67,7 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
   calendarEventoSeleccionado: any = null;
   enRangoCalendario: boolean = false;
   _todosLosPeriodos: Periodo[] = [];
+  hasAttemptedToLoad = false;
 
   constructor(
     private userService: UserService,
@@ -122,6 +123,13 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
     if (this.sort) {
       this.dataSource.sort = this.sort;
     }
+  }
+
+  private configurarDataSource(data: any[] = []) {
+    const dataSource = new MatTableDataSource(data);
+    dataSource.paginator = this.paginator;
+    dataSource.sort = this.sort;
+    return dataSource;
   }
 
   async cargarEventoPTD(): Promise<void> {
@@ -272,6 +280,10 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
     }
   }
 
+  esModoLecturaPorCalendario(): boolean {
+    return !!this.periodos.select?.Id && !this.enRangoCalendario;
+  }
+
   applyFilter(event: Event) {
     const filterValue = (event.target as HTMLInputElement).value;
     this.dataSource.filter = filterValue.trim().toLowerCase();
@@ -368,7 +380,8 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
   onProyectoChange() {
     this.periodos.select = undefined;
     this.periodos.opciones = [];
-    this.dataSource = new MatTableDataSource();
+    this.dataSource = this.configurarDataSource();
+    this.hasAttemptedToLoad = false;
     this.conectarPaginadorYOrdenador();
     if (this.proyectos.select) {
       this.cargarCalendarioEventos(this.proyectos.select.Id).then(eventosCalendario => {
@@ -383,15 +396,11 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
   }
 
   onPeriodoChange() {
-    this.dataSource = new MatTableDataSource();
+    this.dataSource = this.configurarDataSource();
+    this.hasAttemptedToLoad = false;
     this.conectarPaginadorYOrdenador();
     if (this.periodos.select) {
       this.verificarRangoFechas();
-      if (!this.enRangoCalendario) {
-        this.popUpManager.showErrorToast("El periodo seleccionado no se encuentra en el rango de fechas.");
-        return;
-      }
-
       this.listarConsolidados();
     }
   }
@@ -403,10 +412,6 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
       );
       return;
     }
-    if (!this.enRangoCalendario) {
-      this.popUpManager.showErrorToast("El periodo seleccionado no se encuentra en el rango de fechas.");
-      return;
-    }
     if (this.periodos.select) {
       let proyecto = ""
       if (this.proyectos.select && !this.roles.includes(ROLES.DOCENTE)) {
@@ -416,24 +421,18 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
         const idEstadosFiltro = this.idEstadosSegunPermisos();
         let rawlistarConsolidados = <any[]>resp.Data;
         if (!rawlistarConsolidados || rawlistarConsolidados.length === 0) {
-          this.dataSource = new MatTableDataSource();
-          this.conectarPaginadorYOrdenador();
-          this.popUpManager.showPopUpGeneric(
-            this.translate.instant('ptd.gest_consolidados'),
-            'No se encontraron consolidados para el proyecto y periodo seleccionado.',
-            MODALS.INFO,
-            false
-          );
-          return;
+          this.dataSource = this.configurarDataSource();
+        } else {
+          rawlistarConsolidados = rawlistarConsolidados.filter(consolidado => idEstadosFiltro.includes(consolidado.estado_consolidado_id));
+          const formatedData = this.estilizarDatosSegunPermisos(rawlistarConsolidados);
+          this.dataSource = this.configurarDataSource(formatedData);
         }
-
-        rawlistarConsolidados = rawlistarConsolidados.filter(consolidado => idEstadosFiltro.includes(consolidado.estado_consolidado_id));
-        const formatedData = this.estilizarDatosSegunPermisos(rawlistarConsolidados);
-        this.dataSource = new MatTableDataSource(formatedData);
         this.conectarPaginadorYOrdenador();
+        this.hasAttemptedToLoad = true;
       }, (err) => {
-        this.dataSource = new MatTableDataSource();
+        this.dataSource = this.configurarDataSource();
         this.conectarPaginadorYOrdenador();
+        this.hasAttemptedToLoad = true;
         console.warn(err);
       });
     }
@@ -453,7 +452,7 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
       const periodo = this.periodos.opciones.find(periodo => periodo.Id == consolidado.periodo_id);
       const estadoConsolidado = this.estadosConsolidado.opciones.find(estado => estado._id == consolidado.estado_consolidado_id);
       let opcionGestion = "ver";
-      if (consolidado.estado_consolidado_id === this.ESTADOS.ENV && this.roles.includes(ROLES.DECANO)) {
+      if (!this.esModoLecturaPorCalendario() && consolidado.estado_consolidado_id === this.ESTADOS.ENV && this.roles.includes(ROLES.DECANO)) {
         opcionGestion = "editar";
       }
       formatedData.push({
@@ -503,7 +502,7 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
     const respuestaDecanatura = this.parseJson(this.revConsolidadoInfo.respuesta_decanatura, { sec: {}, dec: {} });
     let terceroId = 0;
     if (respuestaDecanatura?.dec) {
-      this.formRevConsolidado.patchValue({ Observaciones: respuestaDecanatura.dec.observacion || '' });
+      this.formRevConsolidado.patchValue({ Observaciones: this.normalizarTextoObservacion(respuestaDecanatura.dec.observacion || '') });
       terceroId = respuestaDecanatura.dec.responsable_id || 0;
     }
 
@@ -534,12 +533,16 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
 
     const putPlan = _cloneDeep(this.revConsolidadoInfo);
     const personaId = await this.userService.getPersonaId();
+    const nombreDecano = await this.obtenerNombreDecano(personaId);
     const respuestaDecanatura = this.parseJson(putPlan.respuesta_decanatura, { sec: {}, dec: {} });
+    const observacionLimpia = this.normalizarTextoObservacion(this.formRevConsolidado.get('Observaciones')?.value || '');
+    const fechaRegistro = this.formatoFecha(new Date().toISOString());
 
     respuestaDecanatura.dec = {
       ...respuestaDecanatura.dec,
       responsable_id: personaId,
-      observacion: this.formRevConsolidado.get('Observaciones')?.value,
+      rol: 'Decano',
+      observacion: `[${nombreDecano}] - ${fechaRegistro}:\n\n${observacionLimpia}`,
     };
     putPlan.cumple_normativa = !!this.formRevConsolidado.get('CumpleNorma')?.value;
 
@@ -610,6 +613,16 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
     });
   }
 
+  private async obtenerNombreDecano(terceroId: number): Promise<string> {
+    try {
+      const resTerc: any = await firstValueFrom(this.tercerosService.get('tercero/' + terceroId));
+      const nombreCompleto = String(resTerc?.NombreCompleto || '').trim();
+      return nombreCompleto || 'Decano';
+    } catch {
+      return 'Decano';
+    }
+  }
+
   private parseJson(value: any, defaultValue: any) {
     if (!value) {
       return defaultValue;
@@ -619,6 +632,18 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
     } catch {
       return defaultValue;
     }
+  }
+
+  private normalizarTextoObservacion(observacion: string): string {
+    const texto = String(observacion || '').trim();
+    if (!texto) {
+      return '';
+    }
+
+    return texto
+      .replace(/^\[(decano|decanatura|secretar[ií]a decanatura)\]\s*-\s*[^:]*:\s*/i, '')
+      .replace(/^(secretar[ií]a\s+decanatura|decanatura|decano)\s*:\s*/i, '')
+      .trim();
   }
 
   regresar() {

@@ -17,6 +17,11 @@
   <mat-card-content *ngIf="vistaActiva === 'docente' && permisos['tabla_docente']">
     <h3 class="margin-y">{{ "ptd.preasignacion" | translate }}</h3>
 
+    <div class="alert info" *ngIf="esModoLecturaPorCalendario()">
+      <mat-icon class="icon">lock</mat-icon>
+      Modo lectura debido a restricciones de calendario
+    </div>
+
     <div class="row">
       <div class="col-6">
         <mat-form-field class="form-field" style="width: 100%">
@@ -68,7 +73,7 @@
         {{ "GLOBAL.actualizar" | translate }}
       </button>
       <button
-        *ngIf="permisos['aprobacion_docente']"
+        *ngIf="permisos['aprobacion_docente'] && !esModoLecturaPorCalendario()"
         mat-flat-button
         color="accent"
         (click)="enviarAprobacion()"
@@ -179,6 +184,11 @@
   <!-- Vista de tabla lista Coordinador -->
   <mat-card-content *ngIf="vistaActiva === 'coordinador' && permisos['tabla_coordinador']">
     <h3 class="margin-y">{{ "ptd.preasignacion" | translate }}</h3>
+
+    <div class="alert info" *ngIf="esModoLecturaPorCalendario()">
+      <mat-icon class="icon">lock</mat-icon>
+      Modo lectura debido a restricciones de calendario
+    </div>
 
     <div class="row">
       <div class="col-6">
@@ -353,11 +363,23 @@
             ></action-button>
           </mat-cell>
         </ng-container>
+        <ng-container matColumnDef="ver_detalle">
+          <mat-header-cell *matHeaderCellDef>
+            <b>{{ "GLOBAL.ver" | translate }}</b>
+          </mat-header-cell>
+          <mat-cell *matCellDef="let row">
+            <action-button
+              [rowData]="row"
+              [value]="{ type: 'ver', disabled: false }"
+              (valueChanged)="accionVerDetalle($event)"
+            ></action-button>
+          </mat-cell>
+        </ng-container>
         <mat-header-row
-          *matHeaderRowDef="displayedColumns_coord"
+          *matHeaderRowDef="displayedColumnsCoordActual"
         ></mat-header-row>
         <mat-row
-          *matRowDef="let row; columns: displayedColumns_coord"
+          *matRowDef="let row; columns: displayedColumnsCoordActual"
         ></mat-row>
       </mat-table>
       <mat-paginator #paginatorCoord

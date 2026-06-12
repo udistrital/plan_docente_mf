@@ -28,7 +28,7 @@
                 >--{{ "GLOBAL.seleccionar" | translate }}--</mat-option
               >
               <mat-option
-                *ngFor="let item of proyectos?.opciones"
+                *ngFor="let item of proyectos.opciones"
                 [value]="item"
               >
                 {{ item.Codigo }} - {{ item.Nombre }}
@@ -79,7 +79,12 @@
           </div>
         </div>
 
-        <div>
+        <div class="alert info" *ngIf="esModoLecturaPorCalendario()">
+          <mat-icon class="icon">lock</mat-icon>
+          Modo lectura debido a restricciones de calendario
+        </div>
+
+        <div *ngIf="dataSource.data.length > 0">
           <mat-form-field>
             <mat-label>{{ "GLOBAL.filtrar" | translate }}</mat-label>
             <input matInput (keyup)="applyFilter($event)" #input />
@@ -158,14 +163,19 @@
               </mat-cell>
             </ng-container>
             <mat-header-row
-              *matHeaderRowDef="displayedColumns"
+              *matHeaderRowDef="displayedColumnsActual"
             ></mat-header-row>
-            <mat-row *matRowDef="let row; columns: displayedColumns"></mat-row>
+            <mat-row *matRowDef="let row; columns: displayedColumnsActual"></mat-row>
           </mat-table>
           <mat-paginator
             [pageSizeOptions]="[5, 10, 25, 100]"
             aria-label="Select page of users"
           ></mat-paginator>
+        </div>
+
+        <div *ngIf="hasAttemptedToLoad && dataSource.data.length === 0" class="margin-y alert info">
+          <mat-icon class="icon">sentiment_very_dissatisfied</mat-icon>
+          {{ "ptd.sin_asignaciones_de_carga_academica_por_periodo" | translate }}
         </div>
       </mat-card>
     </mat-card-content>
@@ -218,7 +228,7 @@
                   >--{{ "GLOBAL.seleccionar" | translate }}--</mat-option
                 >
                 <mat-option
-                  *ngFor="let item of proyectos?.opciones"
+                  *ngFor="let item of proyectos.opciones"
                   [value]="item"
                 >
                   {{ item.Codigo }} - {{ item.Nombre }}
@@ -412,8 +422,9 @@
                     'GLOBAL.placeholder_observacion' | translate
                   }}"
                   matTextareaAutosize
-                  matAutosizeMinRows="3"
-                  matAutosizeMaxRows="6"
+                  matAutosizeMinRows="5"
+                  matAutosizeMaxRows="10"
+                  style="min-height: 180px;"
                 ></textarea>
               </mat-form-field>
             </div>

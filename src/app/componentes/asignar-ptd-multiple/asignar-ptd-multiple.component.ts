@@ -51,6 +51,7 @@ export class AsignarPtdMultipleComponent implements OnInit {
   @Input() detalleAsignacion: any = undefined;
   @Input() periodosAnteriores: any[] = [];
   @Input() soloLectura: boolean = false;
+  @Input() vigenciaActiva: boolean = true;
   @Output() OutDetalleChanged: EventEmitter<any> = new EventEmitter();
 
   constructor(
