@@ -68,6 +68,8 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
   enRangoCalendario: boolean = false;
   _todosLosPeriodos: Periodo[] = [];
   hasAttemptedToLoad = false;
+  documentoDocenteConsulta: string = '';
+  terceroIdConsulta: number | null = null;
 
   constructor(
     private userService: UserService,
@@ -92,16 +94,28 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
   async ngOnInit() {
     this.popUpManager.showLoading();
     try {
-      await this.cargarEventoPTD();
       const roles = await this.userService.getUserRoles();
       this.roles = roles;
-      const observables: { [key: string]: Observable<boolean> } = {};
-      this.opcionesPermisos.forEach(opcion => {
-        observables[opcion] =
-          this.permisosUtils.tienePermiso(roles, opcion);
-      });
-      const resultados = await firstValueFrom(forkJoin(observables));
-      this.permisos = resultados;
+
+      if (!this.roles.includes('ADMIN_SGA')) {
+        await this.cargarEventoPTD();
+      }
+
+      if (this.roles.includes('ADMIN_SGA')) {
+        this.permisos = {
+          ver_gestion_consolidado: true,
+          editar_gestion_consolidado: false,
+          ver_consolidados_decanatura: true
+        };
+      } else {
+        const observables: { [key: string]: Observable<boolean> } = {};
+        this.opcionesPermisos.forEach(opcion => {
+          observables[opcion] =
+            this.permisosUtils.tienePermiso(roles, opcion);
+        });
+        const resultados = await firstValueFrom(forkJoin(observables));
+        this.permisos = resultados;
+      }
       console.log("Permisos cargados:", this.permisos);
       await this.loadSelects();
       this.buildForm();
@@ -154,9 +168,16 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
       }
     }
 
+  private async obtenerDocumentoCoordinador(): Promise<string | null> {
+    if (this.roles.includes('ADMIN_SGA')) {
+      return this.documentoDocenteConsulta || null;
+    }
+    return this.userService.getUserDocument();
+  }
+
   cargarCalendarioEventos(proyectoId?: string): Promise<any[]> {
     return new Promise((resolve, reject) => {
-      this.userService.getUserDocument().then((documento) => {
+      this.obtenerDocumentoCoordinador().then((documento) => {
         if (!documento || !this.codigoEventoPTD) {
           reject(new Error('No se pudo obtener documento o código de evento'));
           return;
@@ -181,7 +202,7 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
   async cargarProyectosFacultadDecano(): Promise<void> {
     try {
       // 1. Obtención síncrona del documento del usuario
-      const documento = await this.userService.getUserDocument();
+      const documento = await this.obtenerDocumentoCoordinador();
       if (!documento) {
         throw new Error('No se pudo obtener documento del usuario');
       }
@@ -281,6 +302,9 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
   }
 
   esModoLecturaPorCalendario(): boolean {
+    if (this.roles.includes('ADMIN_SGA')) {
+      return true;
+    }
     return !!this.periodos.select?.Id && !this.enRangoCalendario;
   }
 
@@ -395,6 +419,52 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
     }
   }
 
+  async procesarDocumentoSuperusuario() {
+    if (!this.documentoDocenteConsulta) {
+      this.proyectos.opciones = [];
+      this.periodos.opciones = [];
+      this.proyectos.select = null;
+      this.periodos.select = null;
+      this.dataSource.data = [];
+      this.terceroIdConsulta = null;
+      return;
+    }
+
+    this.popUpManager.showLoading();
+    try {
+      // 1. Resolve TerceroId
+      const queryUrl = `datos_identificacion?query=Activo:true,Numero:${this.documentoDocenteConsulta}&sortby=FechaCreacion&order=desc`;
+      const respTercero = await firstValueFrom(this.tercerosService.get(queryUrl));
+      const dataTercero = respTercero?.Data ?? respTercero ?? [];
+      if (!Array.isArray(dataTercero) || dataTercero.length === 0 || !dataTercero[0]?.TerceroId?.Id) {
+        this.popUpManager.showErrorToast(this.translate.instant("ptd.error_no_found_docente"));
+        this.proyectos.opciones = [];
+        this.periodos.opciones = [];
+        this.proyectos.select = null;
+        this.periodos.select = null;
+        this.dataSource.data = [];
+        this.terceroIdConsulta = null;
+        return;
+      }
+      this.terceroIdConsulta = dataTercero[0].TerceroId.Id;
+
+      // 2. Load calendar events and projects for this teacher's document
+      await this.cargarProyectosFacultadDecano();
+      await this.cargarEventoPTD();
+      
+      this.proyectos.select = null;
+      this.periodos.select = null;
+      this.periodos.opciones = [];
+      this.dataSource.data = [];
+      this.hasAttemptedToLoad = false;
+    } catch (err) {
+      console.error(err);
+      this.popUpManager.showErrorToast(this.translate.instant("ERROR.persiste_error_comunique_OAS"));
+    } finally {
+      this.popUpManager.closeLoading();
+    }
+  }
+
   onPeriodoChange() {
     this.dataSource = this.configurarDataSource();
     this.hasAttemptedToLoad = false;
@@ -439,7 +509,7 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
   }
 
   idEstadosSegunPermisos(): string[] {
-    if (this.roles.includes(ROLES.DECANO)) {
+    if (this.roles.includes(ROLES.DECANO) || this.roles.includes('ADMIN_SGA')) {
       return [this.ESTADOS.ENV, this.ESTADOS.APR, this.ESTADOS.N_APR];
     }
     return [];
@@ -509,6 +579,12 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
     if (!terceroId) {
       this.userService.getPersonaId().then((personaId) => {
         this.cargarResponsable(personaId);
+      }).catch(() => {
+        if (this.roles.includes('ADMIN_SGA')) {
+          this.formRevConsolidado.patchValue({
+            QuienResponde: 'ADMIN_SGA',
+          });
+        }
       });
     } else {
       this.cargarResponsable(terceroId);
@@ -532,8 +608,13 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
     }
 
     const putPlan = _cloneDeep(this.revConsolidadoInfo);
-    const personaId = await this.userService.getPersonaId();
-    const nombreDecano = await this.obtenerNombreDecano(personaId);
+    let personaId: number;
+    try {
+      personaId = await this.userService.getPersonaId();
+    } catch {
+      personaId = 0;
+    }
+    const nombreDecano = personaId ? await this.obtenerNombreDecano(personaId) : 'ADMIN_SGA';
     const respuestaDecanatura = this.parseJson(putPlan.respuesta_decanatura, { sec: {}, dec: {} });
     const observacionLimpia = this.normalizarTextoObservacion(this.formRevConsolidado.get('Observaciones')?.value || '');
     const fechaRegistro = this.formatoFecha(new Date().toISOString());
