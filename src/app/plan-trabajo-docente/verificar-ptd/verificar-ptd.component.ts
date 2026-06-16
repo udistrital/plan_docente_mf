@@ -42,6 +42,8 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
   selection = new SelectionModel<any>(true, []);
   bulkApprovalInProgress = false;
   hasAttemptedToLoad = false;
+  documentoDocenteConsulta: string = '';
+  terceroIdConsulta: number | null = null;
   sinDatosParaMostrar = false;
   
   dataSource: MatTableDataSource<any>;
@@ -92,10 +94,19 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
   async ngOnInit() {
     this.popUpManager.showLoading();
     try {
-      await this.cargarEventoPTD();
       const roles = await this.userService.getUserRoles();
       this.roles = roles;
-      this.isCoordinator = _head(_intersection(roles, this.rolesCoord));
+
+      if (!this.roles.includes('ADMIN_SGA')) {
+        await this.cargarEventoPTD();
+      }
+
+      if (this.roles.includes('ADMIN_SGA')) {
+        this.isCoordinator = ROLES.COORDINADOR;
+      } else {
+        this.isCoordinator = _head(_intersection(roles, this.rolesCoord));
+      }
+
       await this.loadSelects();
       this.buildForms();
     } catch (err) {
@@ -464,6 +475,9 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
 
 
   private obtenerDocumentoCoordinador(): string | null {
+    if (this.roles.includes('ADMIN_SGA')) {
+      return this.documentoDocenteConsulta || null;
+    }
     try {
       const userEncoded = window.localStorage.getItem("user");
       if (!userEncoded) return null;
@@ -529,7 +543,55 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
     }
   }
 
+  async procesarDocumentoSuperusuario() {
+    if (!this.documentoDocenteConsulta) {
+      this.proyectos.opciones = [];
+      this.periodos.opciones = [];
+      this.proyectos.select = null;
+      this.periodos.select = null;
+      this.dataSource.data = [];
+      this.terceroIdConsulta = null;
+      return;
+    }
+
+    this.popUpManager.showLoading();
+    try {
+      // 1. Resolve TerceroId
+      const queryUrl = `datos_identificacion?query=Activo:true,Numero:${this.documentoDocenteConsulta}&sortby=FechaCreacion&order=desc`;
+      const respTercero = await firstValueFrom(this.tercerosService.get(queryUrl));
+      const dataTercero = respTercero?.Data ?? respTercero ?? [];
+      if (!Array.isArray(dataTercero) || dataTercero.length === 0 || !dataTercero[0]?.TerceroId?.Id) {
+        this.popUpManager.showErrorToast(this.translate.instant("ptd.error_no_found_docente"));
+        this.proyectos.opciones = [];
+        this.periodos.opciones = [];
+        this.proyectos.select = null;
+        this.periodos.select = null;
+        this.dataSource.data = [];
+        this.terceroIdConsulta = null;
+        return;
+      }
+      this.terceroIdConsulta = dataTercero[0].TerceroId.Id;
+
+      // 2. Load calendar events and projects for this teacher's document
+      await this.cargarEventoPTD();
+      
+      this.proyectos.select = null;
+      this.periodos.select = null;
+      this.periodos.opciones = [];
+      this.dataSource.data = [];
+      this.hasAttemptedToLoad = false;
+    } catch (err) {
+      console.error(err);
+      this.popUpManager.showErrorToast(this.translate.instant("ERROR.persiste_error_comunique_OAS"));
+    } finally {
+      this.popUpManager.closeLoading();
+    }
+  }
+
   esModoLecturaPorCalendario(): boolean {
+    if (this.roles.includes('ADMIN_SGA')) {
+      return true;
+    }
     return !!this.periodos.select?.Id && !this.enRangoCalendario;
   }
 
@@ -561,13 +623,16 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
           this.sinDatosParaMostrar = true;
         } else {
           const respuestas = await Promise.all(
-            estadosVerificacion.map((estadoId) =>
-              firstValueFrom(
-                this.planTrabajoDocenteService.get(
-                  `plan_docente?query=activo:true,periodo_id:${this.periodos.select.Id},estado_plan_id:${estadoId}&limit=0`
-                )
-              )
-            )
+            estadosVerificacion.map((estadoId) => {
+              let queryStr = `plan_docente?query=activo:true,periodo_id:${this.periodos.select.Id},estado_plan_id:${estadoId}`;
+              if (this.roles.includes('ADMIN_SGA') && this.terceroIdConsulta) {
+                queryStr += `,docente_id:${this.terceroIdConsulta}`;
+              }
+              queryStr += `&limit=0`;
+              return firstValueFrom(
+                this.planTrabajoDocenteService.get(queryStr)
+              );
+            })
           );
 
           const planes = respuestas.flatMap((respuesta: any) =>
@@ -691,12 +756,24 @@ export class VerificarPtdComponent implements OnInit, AfterViewInit {
           })
           await this.getInfoResponsable(terceroId);
         } else {
-          const terceroId = await this.userService.getPersonaId();
-          await this.getInfoResponsable(terceroId);
+          try {
+            const terceroId = await this.userService.getPersonaId();
+            await this.getInfoResponsable(terceroId);
+          } catch {
+            this.formVerificar.patchValue({
+              QuienResponde: 'ADMIN_SGA',
+            });
+          }
         }
       } else {
-        const terceroId = await this.userService.getPersonaId();
-        await this.getInfoResponsable(terceroId);
+        try {
+          const terceroId = await this.userService.getPersonaId();
+          await this.getInfoResponsable(terceroId);
+        } catch {
+          this.formVerificar.patchValue({
+            QuienResponde: 'ADMIN_SGA',
+          });
+        }
       }
       this.actualizarModoFormularioVerificacion();
       this.vista = VIEWS.FORM;

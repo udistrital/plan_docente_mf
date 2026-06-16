@@ -90,6 +90,8 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
   enRangoCalendario: boolean = false;
   _todosLosPeriodos: Periodo[] = [];
   hasAttemptedToLoad = false;
+  documentoDocenteConsulta: string = '';
+  terceroIdConsulta: number | null = null;
 
   constructor(
     private userService: UserService,
@@ -121,21 +123,33 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
     this.popUpManager.showLoading();
     
     try {
-      // Espera real del evento y cálculo de fechas del calendario
-      await this.cargarEventoPTD();
-
       // 1. Carga de roles corporativos
       const roles = await this.userService.getUserRoles();
       this.roles = roles;
 
-      // 2. Mapeo optimizado de permisos
-      const observables: Record<string, Observable<boolean>> = this.opcionesPermisos.reduce((acc, opcion) => {
-        acc[opcion] = this.permisosUtils.tienePermiso(roles, opcion);
-        return acc;
-      }, {} as Record<string, Observable<boolean>>);
+      // Espera real del evento y cálculo de fechas del calendario
+      if (!this.roles.includes('ADMIN_SGA')) {
+        await this.cargarEventoPTD();
+      }
 
-      // 3. Resolución de la matriz de permisos
-      this.permisos = await firstValueFrom(forkJoin(observables));
+      if (this.roles.includes('ADMIN_SGA')) {
+        this.permisos = {
+          ver_gestion_consolidado: true,
+          editar_gestion_consolidado: false,
+          nuevo_consolidado: false,
+          enviar_coordinador_consolidado: false,
+          ver_consolidados_coordinacion: true
+        };
+      } else {
+        // 2. Mapeo optimizado de permisos
+        const observables: Record<string, Observable<boolean>> = this.opcionesPermisos.reduce((acc, opcion) => {
+          acc[opcion] = this.permisosUtils.tienePermiso(roles, opcion);
+          return acc;
+        }, {} as Record<string, Observable<boolean>>);
+
+        // 3. Resolución de la matriz de permisos
+        this.permisos = await firstValueFrom(forkJoin(observables));
+      }
       console.log("Permisos cargados:", this.permisos);
 
       // Espera real a que los catálogos/selects estén mapeados en memoria
@@ -237,6 +251,9 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
   }
 
   esModoLecturaPorCalendario(): boolean {
+    if (this.roles.includes('ADMIN_SGA')) {
+      return true;
+    }
     return !!this.periodos.select?.Id && !this.enRangoCalendario;
   }
 
@@ -464,6 +481,9 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
 
 
   private obtenerDocumentoCoordinador(): string | null {
+    if (this.roles.includes('ADMIN_SGA')) {
+      return this.documentoDocenteConsulta || null;
+    }
     try {
       const userEncoded = window.localStorage.getItem("user");
       if (!userEncoded) return null;
@@ -532,6 +552,51 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
     this.hasAttemptedToLoad = false;
     if (this.proyectos.select) {
       this.filtrarPeriodosPorCalendario();
+    }
+  }
+
+  async procesarDocumentoSuperusuario() {
+    if (!this.documentoDocenteConsulta) {
+      this.proyectos.opciones = [];
+      this.periodos.opciones = [];
+      this.proyectos.select = null;
+      this.periodos.select = null;
+      this.dataSource.data = [];
+      this.terceroIdConsulta = null;
+      return;
+    }
+
+    this.popUpManager.showLoading();
+    try {
+      // 1. Resolve TerceroId
+      const queryUrl = `datos_identificacion?query=Activo:true,Numero:${this.documentoDocenteConsulta}&sortby=FechaCreacion&order=desc`;
+      const respTercero = await firstValueFrom(this.tercerosService.get(queryUrl));
+      const dataTercero = respTercero?.Data ?? respTercero ?? [];
+      if (!Array.isArray(dataTercero) || dataTercero.length === 0 || !dataTercero[0]?.TerceroId?.Id) {
+        this.popUpManager.showErrorToast(this.translate.instant("ptd.error_no_found_docente"));
+        this.proyectos.opciones = [];
+        this.periodos.opciones = [];
+        this.proyectos.select = null;
+        this.periodos.select = null;
+        this.dataSource.data = [];
+        this.terceroIdConsulta = null;
+        return;
+      }
+      this.terceroIdConsulta = dataTercero[0].TerceroId.Id;
+
+      // 2. Load calendar events and projects for this teacher's document
+      await this.cargarEventoPTD();
+      
+      this.proyectos.select = null;
+      this.periodos.select = null;
+      this.periodos.opciones = [];
+      this.dataSource.data = [];
+      this.hasAttemptedToLoad = false;
+    } catch (err) {
+      console.error(err);
+      this.popUpManager.showErrorToast(this.translate.instant("ERROR.persiste_error_comunique_OAS"));
+    } finally {
+      this.popUpManager.closeLoading();
     }
   }
 
@@ -714,12 +779,18 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
             this.getInfoResponsable(terceroId);
           })
           .catch(() => {
-            this.popUpManager.showPopUpGeneric(
-              this.translate.instant("ERROR.titulo_generico"),
-              this.translate.instant("ERROR.persiste_error_comunique_OAS"),
-              MODALS.ERROR,
-              false
-            );
+            if (this.roles.includes('ADMIN_SGA')) {
+              this.formNewEditConsolidado.patchValue({
+                QuienEnvia: 'ADMIN_SGA',
+              });
+            } else {
+              this.popUpManager.showPopUpGeneric(
+                this.translate.instant("ERROR.titulo_generico"),
+                this.translate.instant("ERROR.persiste_error_comunique_OAS"),
+                MODALS.ERROR,
+                false
+              );
+            }
           });
       }
     } else {
@@ -734,12 +805,18 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
           this.getInfoResponsable(terceroId);
         })
         .catch(() => {
-          this.popUpManager.showPopUpGeneric(
-            this.translate.instant("ERROR.titulo_generico"),
-            this.translate.instant("ERROR.persiste_error_comunique_OAS"),
-            MODALS.ERROR,
-            false
-          );
+          if (this.roles.includes('ADMIN_SGA')) {
+            this.formNewEditConsolidado.patchValue({
+              QuienEnvia: 'ADMIN_SGA',
+            });
+          } else {
+            this.popUpManager.showPopUpGeneric(
+              this.translate.instant("ERROR.titulo_generico"),
+              this.translate.instant("ERROR.persiste_error_comunique_OAS"),
+              MODALS.ERROR,
+              false
+            );
+          }
         });
     }
   }
@@ -856,7 +933,12 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
 
   async validarFormNewEdit() {
     const archivo = this.formNewEditConsolidado.get("ArchivoSoporte")?.value;
-    const responsableId = await this.userService.getPersonaId();
+    let responsableId = 0;
+    try {
+      responsableId = await this.userService.getPersonaId();
+    } catch {
+      responsableId = 0;
+    }
     if (!this.periodos.select || !this.proyectos.select) {
       this.popUpManager.showPopUpGeneric(
         this.translate.instant("ptd.diligenciar_consolidado"),

@@ -6,6 +6,19 @@
         <h2>{{ "ptd.asignacion_ptd" | translate }}</h2>
       </mat-card-title>
     </mat-card-header>
+
+    <!-- Input de Documento Docente para ADMIN_SGA (General, Paso 1) -->
+    <div *ngIf="roles.includes('ADMIN_SGA')" style="padding: 0 16px 16px 16px;">
+      <div class="row">
+        <div class="col-12">
+          <mat-form-field class="form-field" style="width: 100%">
+            <mat-label>{{ "ptd.documento_docente" | translate }}</mat-label>
+            <input matInput [(ngModel)]="documentoDocenteConsulta" (change)="procesarDocumentoSuperusuario()" placeholder="Ej. 79702248" />
+          </mat-form-field>
+        </div>
+      </div>
+    </div>
+
     <mat-card-content>
       <mat-toolbar *ngIf="permisos['asignaciones_docente'] && permisos['asignaciones_coordinador']" style="display: flex; gap: 1em; background-color: transparent; box-shadow: none;">
         <button mat-raised-button [color]="vistaActiva === 'docente' ? 'primary' : ''" (click)="cambiarVista('docente')">
@@ -25,7 +38,7 @@
         <div class="col-6">
           <mat-form-field class="form-field" style="width: 100%">
         <mat-label>{{ "GLOBAL.proyecto_academico" | translate }}:</mat-label>
-        <mat-select (selectionChange)="selectProyecto($event)" [(ngModel)]="proyecto">
+        <mat-select (selectionChange)="selectProyecto($event)" [(ngModel)]="proyecto" [disabled]="!proyectos || proyectos.length === 0">
           <mat-option>--{{ "GLOBAL.seleccionar" | translate }}--</mat-option>
           <mat-option *ngFor="let item of proyectos" [value]="item">
             {{ item.Codigo }} - {{ item.Nombre }}
