@@ -23,6 +23,7 @@ import { firstValueFrom } from "rxjs/internal/firstValueFrom";
 import { Observable } from "rxjs/internal/Observable";
 import { PermisosUtils } from "src/app/utils/role-permissions";
 import { AcademicaJbpmService } from "src/app/services/academica-jbpm.service";
+import { TercerosService } from "src/app/services/terceros.service";
 import {
   debeValidarHorasSegunRolEnvio,
   validarHorasPlanDocentePorVinculacion,
@@ -91,6 +92,8 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
   detallesGeneral: any = {};
   private proyectosCoordinador: string[] = [];
   private preasignacionesPeriodo: any[] = [];
+  documentoDocenteConsulta: string = '';
+  terceroIdConsulta: number | null = null;
   hasAttemptedToLoad = false;
 
   constructor(
@@ -103,7 +106,8 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
     private gestorDocumental: GestorDocumentalService,
     private matDialog: MatDialog,
     private permisosUtils: PermisosUtils,
-    private academicaJbpmService: AcademicaJbpmService
+    private academicaJbpmService: AcademicaJbpmService,
+    private tercerosService: TercerosService
   ) {
     this.vista = VIEWS.LIST;
     this.dataSource = new MatTableDataSource();
@@ -112,10 +116,14 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
   async ngOnInit() {
     this.popUpManager.showLoading();
     try {
-      await this.cargarEventoPTD();
       // Espera roles
       const roles = await this.userService.getUserRoles();
       this.roles = roles;
+
+      if (!this.roles.includes('ADMIN_SGA')) {
+        await this.cargarEventoPTD();
+      }
+      
       // Construcción observables permisos
       const observables: { [key: string]: Observable<boolean> } = {};
       this.opcionesPermisos.forEach(opcion => {
@@ -128,6 +136,16 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
       });
       const resultados = await firstValueFrom(forkJoin(observables));
       this.permisos = resultados;
+
+      if (this.roles.includes('ADMIN_SGA')) {
+        this.permisos['asignaciones_coordinador'] = true;
+        this.permisos['asignaciones_docente'] = true;
+        this.permisos['ver_gestion'] = true;
+        this.permisos['editar_gestion'] = false;
+        this.permisos['enviar_coordinador'] = false;
+        this.permisos['enviar_docente'] = false;
+      }
+
       console.log("Permisos cargados:", this.permisos);
 
       if (!this.permisos['asignaciones_docente'] && this.permisos['asignaciones_coordinador']) {
@@ -303,6 +321,9 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
   }
 
   esModoLecturaPorCalendario(): boolean {
+    if (this.roles.includes('ADMIN_SGA')) {
+      return true;
+    }
     return !!this.periodo?.Id && !this.enRangoCalendario;
   }
 
@@ -618,8 +639,16 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
         }
 
       } else if (this.vistaActiva === 'docente') {
-        // Convertimos el viejo .then del userService en await
-        const id_tercero = await this.userService.getPersonaId();
+        let id_tercero: number;
+        if (this.roles.includes('ADMIN_SGA')) {
+          if (!this.terceroIdConsulta) {
+            this.popUpManager.showErrorToast(this.translate.instant("ptd.error_doc_docente"));
+            return;
+          }
+          id_tercero = this.terceroIdConsulta;
+        } else {
+          id_tercero = await this.userService.getPersonaId();
+        }
         
         url = `asignacion/docente?docente=${id_tercero}&vigencia=${this.periodo.Id}`;
         if (this.proyecto?.Id && !this.roles.includes(ROLES.DOCENTE)) {
@@ -833,6 +862,57 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
       );
     } finally {
       // El spinner solo se cerrará CUANDO los datos ya estén en la tabla (o falle)
+      this.popUpManager.closeLoading();
+    }
+  }
+
+  async procesarDocumentoSuperusuario() {
+    if (!this.documentoDocenteConsulta) {
+      this.proyectos = [];
+      this.periodosFiltrados = [];
+      this.dataSource.data = [];
+      this.terceroIdConsulta = null;
+      this.proyectosCoordinador = [];
+      return;
+    }
+
+    this.popUpManager.showLoading();
+    try {
+      // 1. Resolve TerceroId
+      const queryUrl = `datos_identificacion?query=Activo:true,Numero:${this.documentoDocenteConsulta}&sortby=FechaCreacion&order=desc`;
+      const respTercero = await firstValueFrom(this.tercerosService.get(queryUrl));
+      const dataTercero = respTercero?.Data ?? respTercero ?? [];
+      if (!Array.isArray(dataTercero) || dataTercero.length === 0 || !dataTercero[0]?.TerceroId?.Id) {
+        this.popUpManager.showErrorToast(this.translate.instant("ptd.error_no_found_docente"));
+        this.proyectos = [];
+        this.periodosFiltrados = [];
+        this.dataSource.data = [];
+        this.terceroIdConsulta = null;
+        this.proyectosCoordinador = [];
+        return;
+      }
+      this.terceroIdConsulta = dataTercero[0].TerceroId.Id;
+
+      // 2. Load coordinator projects if applicable
+      try {
+        this.proyectosCoordinador = await this.obtenerProyectosCoordinador();
+      } catch (e) {
+        console.warn("Could not retrieve coordinator projects:", e);
+        this.proyectosCoordinador = [];
+      }
+
+      // 3. Load calendar events and projects for this teacher's document
+      await this.cargarEventoPTD();
+      
+      this.proyecto = null;
+      this.periodo = new Periodo({});
+      this.periodosFiltrados = [];
+      this.dataSource.data = [];
+      this.hasAttemptedToLoad = false;
+    } catch (err) {
+      console.error(err);
+      this.popUpManager.showErrorToast(this.translate.instant("ERROR.persiste_error_comunique_OAS"));
+    } finally {
       this.popUpManager.closeLoading();
     }
   }
@@ -1388,6 +1468,9 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
   }
 
   private obtenerDocumentoCoordinador(): string | null {
+    if (this.roles.includes('ADMIN_SGA')) {
+      return this.documentoDocenteConsulta || null;
+    }
     try {
       const userEncoded = window.localStorage.getItem("user");
       if (!userEncoded) {

@@ -893,6 +893,9 @@ export class DialogoPreAsignacionPtdComponent implements OnInit {
   }
 
   private obtenerDocumentoCoordinador(): string | null {
+    if (this.data?.documentoCoordinador) {
+      return this.data.documentoCoordinador;
+    }
     try {
       const userEncoded = window.localStorage.getItem("user");
       if (!userEncoded) {

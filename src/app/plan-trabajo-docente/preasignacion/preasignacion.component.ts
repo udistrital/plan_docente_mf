@@ -19,6 +19,9 @@ import { AcademicaJbpmService } from "src/app/services/academica-jbpm.service";
 import { Observable } from "rxjs/internal/Observable";
 import { firstValueFrom } from "rxjs/internal/firstValueFrom";
 import { forkJoin } from "rxjs/internal/observable/forkJoin";
+import { ProyectoAcademicoService } from "src/app/services/proyecto-academico.service";
+import { TercerosService } from "src/app/services/terceros.service";
+
 
 @Component({
     selector: "app-preasignacion",
@@ -28,6 +31,8 @@ import { forkJoin } from "rxjs/internal/observable/forkJoin";
 })
 export class PreasignacionComponent implements OnInit, AfterViewInit {
   roles: string[] = [];
+  documentoDocenteConsulta: string = '';
+  terceroIdConsulta: number | null = null;
 
   opcionesPermisos: string[] = [
     'aprobacion_docente',
@@ -103,7 +108,9 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
     private dialog: MatDialog,
     private permisosUtils: PermisosUtils,
     private academicaJbpmService: AcademicaJbpmService,
-    private cdr: ChangeDetectorRef
+    private cdr: ChangeDetectorRef,
+    private proyectoAcademicoService: ProyectoAcademicoService,
+    private tercerosService: TercerosService
   ) {
     this.dataSource = new MatTableDataSource();
     this.dialogConfig = new MatDialogConfig();
@@ -112,10 +119,14 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
   async ngOnInit() {
     this.popUpManager.showLoading();
     try {
-      await this.cargarEventoPTD();
       // Espera roles
       const roles = await this.userService.getUserRoles();
       this.roles = roles;
+      
+      if (!this.roles.includes('ADMIN_SGA')) {
+        await this.cargarEventoPTD();
+      }
+      
       // Construcción observables permisos
       const observables: { [key: string]: Observable<boolean> } = {};
       this.opcionesPermisos.forEach(opcion => {
@@ -126,6 +137,13 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
       console.log('Permisos:', this.permisos);
       
       // Inicializar vistaActiva basado en permisos
+      if (this.roles.includes('ADMIN_SGA')) {
+        this.permisos['tabla_coordinador'] = true;
+        this.permisos['tabla_docente'] = true;
+        this.permisos['nueva_preasignacion'] = false;
+        this.permisos['aprobacion_docente'] = false;
+      }
+      
       if (!this.permisos['tabla_docente'] && this.permisos['tabla_coordinador']) {
         this.vistaActiva = 'coordinador';
       } else {
@@ -298,6 +316,9 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
   }
 
   esModoLecturaPorCalendario(): boolean {
+    if (this.roles.includes('ADMIN_SGA')) {
+      return true;
+    }
     return !!this.periodo?.Id && !this.enRangoCalendario;
   }
 
@@ -308,6 +329,9 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
   }
 
   private obtenerDocumentoCoordinador(): string | null {
+    if (this.roles.includes('ADMIN_SGA')) {
+      return this.documentoDocenteConsulta || null;
+    }
     try {
       const userEncoded = window.localStorage.getItem("user");
       if (!userEncoded) {
@@ -675,7 +699,10 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
     }
 
     // 4. Apertura del Diálogo (Se aplanó usando firstValueFrom)
-    this.dialogConfig.data = preasignacion;
+    this.dialogConfig.data = {
+      ...preasignacion,
+      documentoCoordinador: this.roles.includes('ADMIN_SGA') ? this.documentoDocenteConsulta : null
+    };
     const preasignacionDialog = this.dialog.open(
       DialogoPreAsignacionPtdComponent,
       this.dialogConfig
@@ -781,7 +808,9 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
       );
     }
 
-    this.dialogConfig.data = {};
+    this.dialogConfig.data = {
+      documentoCoordinador: this.roles.includes('ADMIN_SGA') ? this.documentoDocenteConsulta : null
+    };
     const preasignacionDialog = this.dialog.open(
       DialogoPreAsignacionPtdComponent,
       this.dialogConfig
@@ -874,6 +903,10 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
         this.manejarAccesoDenegado('GLOBAL.acceso_denegado');
         return;
       }
+      if (this.roles.includes('ADMIN_SGA') && !this.documentoDocenteConsulta) {
+        this.popUpManager.showErrorToast(this.translate.instant("ptd.error_doc_docente"));
+        return;
+      }
     } else {
       this.manejarAccesoDenegado('GLOBAL.acceso_denegado');
       return;
@@ -899,8 +932,17 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
         }
 
       } else if (this.vistaActiva === 'docente') {
-        // Convertimos el viejo .then del userService en await nativo
-        const id_tercero = await this.userService.getPersonaId();
+        let id_tercero: number;
+
+        if (this.roles.includes('ADMIN_SGA')) {
+          if (!this.terceroIdConsulta) {
+            this.popUpManager.showErrorToast(this.translate.instant("ptd.error_doc_docente"));
+            return;
+          }
+          id_tercero = this.terceroIdConsulta;
+        } else {
+          id_tercero = await this.userService.getPersonaId();
+        }
         
         const resp = await firstValueFrom(
           this.planDocenteMid.get(`preasignacion/docente?docente=${id_tercero}&vigencia=${this.periodo.Id}`)
@@ -1024,7 +1066,15 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
     this.dataSource.filter = '';
     this.hasAttemptedToLoad = false;
     if (this.periodo && this.periodo.Id) {
-      this.verificarRangoFechas();
+      if (this.roles.includes('ADMIN_SGA')) {
+        this.enRangoCalendario = false;
+        this.calendarEventoSeleccionado = null;
+        if (!this.documentoDocenteConsulta) {
+          return;
+        }
+      } else {
+        this.verificarRangoFechas();
+      }
       this.popUpManager.showLoading();
       try {
         await this.loadPreasignaciones();
@@ -1037,6 +1087,63 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
     }
   }
 
+  async cambioDocumentoDocente() {
+    this.dataSource.data = [];
+    this.hasAttemptedToLoad = false;
+    if (this.proyecto && this.periodo && this.periodo.Id && this.documentoDocenteConsulta) {
+      this.popUpManager.showLoading();
+      try {
+        await this.loadPreasignaciones();
+      } catch (err) {
+        console.warn(err);
+        this.popUpManager.showErrorToast(this.translate.instant("ERROR.persiste_error_comunique_OAS"));
+      } finally {
+        this.popUpManager.closeLoading();
+      }
+    }
+  }
+
+  async procesarDocumentoSuperusuario() {
+    if (!this.documentoDocenteConsulta) {
+      this.proyectos = [];
+      this.periodosFiltrados = [];
+      this.dataSource.data = [];
+      this.terceroIdConsulta = null;
+      return;
+    }
+
+    this.popUpManager.showLoading();
+    try {
+      // 1. Resolve TerceroId
+      const queryUrl = `datos_identificacion?query=Activo:true,Numero:${this.documentoDocenteConsulta}&sortby=FechaCreacion&order=desc`;
+      const respTercero = await firstValueFrom(this.tercerosService.get(queryUrl));
+      const dataTercero = respTercero?.Data ?? respTercero ?? [];
+      if (!Array.isArray(dataTercero) || dataTercero.length === 0 || !dataTercero[0]?.TerceroId?.Id) {
+        this.popUpManager.showErrorToast(this.translate.instant("ptd.error_no_found_docente"));
+        this.proyectos = [];
+        this.periodosFiltrados = [];
+        this.dataSource.data = [];
+        this.terceroIdConsulta = null;
+        return;
+      }
+      this.terceroIdConsulta = dataTercero[0].TerceroId.Id;
+
+      // 2. Load calendar events and projects for this teacher's document
+      await this.cargarEventoPTD();
+      
+      this.proyecto = null;
+      this.periodo = new Periodo({});
+      this.periodosFiltrados = [];
+      this.dataSource.data = [];
+      this.hasAttemptedToLoad = false;
+    } catch (err) {
+      console.error(err);
+      this.popUpManager.showErrorToast(this.translate.instant("ERROR.persiste_error_comunique_OAS"));
+    } finally {
+      this.popUpManager.closeLoading();
+    }
+  }
+
   accionVerDetalle(event: any): void {
     const preasignacion = event?.rowData;
     if (!preasignacion) {
@@ -1046,6 +1153,7 @@ export class PreasignacionComponent implements OnInit, AfterViewInit {
     this.dialogConfig.data = {
       ...preasignacion,
       readOnly: true,
+      documentoCoordinador: this.roles.includes('ADMIN_SGA') ? this.documentoDocenteConsulta : null
     };
 
     this.dialog.open(DialogoPreAsignacionPtdComponent, this.dialogConfig);
