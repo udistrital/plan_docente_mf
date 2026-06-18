@@ -188,7 +188,29 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
         ).subscribe({
           next: (calResp: any) => {
             const data = calResp?.Data ?? calResp ?? [];
-            resolve(Array.isArray(data) ? data : [data]);
+            const dataArr = Array.isArray(data) ? data : [data];
+            const adjustedData = dataArr.map((evento: any) => {
+              if (evento) {
+                const adjusted = { ...evento };
+                if (evento.FechaInicio) {
+                  const dateInit = new Date(evento.FechaInicio);
+                  if (!isNaN(dateInit.getTime())) {
+                    dateInit.setHours(dateInit.getHours() + 5);
+                    adjusted.FechaInicio = dateInit.toISOString();
+                  }
+                }
+                if (evento.FechaFin) {
+                  const dateFin = new Date(evento.FechaFin);
+                  if (!isNaN(dateFin.getTime())) {
+                    dateFin.setHours(dateFin.getHours() + 5);
+                    adjusted.FechaFin = dateFin.toISOString();
+                  }
+                }
+                return adjusted;
+              }
+              return evento;
+            });
+            resolve(adjustedData);
           },
           error: (err: any) => {
             console.warn("Error obteniendo calendario/calendario_eventos:", err);
