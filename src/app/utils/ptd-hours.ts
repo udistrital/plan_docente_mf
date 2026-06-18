@@ -7,29 +7,82 @@ export interface RestriccionHorasVinculacion {
   alias: string[];
 }
 
-export const RESTRICCIONES_HORAS_POR_VINCULACION: Record<string, RestriccionHorasVinculacion> = {
+/**
+ * Variable para almacenar los parámetros obtenidos del servicio
+ */
+let parametrosCache: any[] = [];
+
+/**
+ * Obtiene parámetros desde el servicio y los almacena en caché
+ * @param parametroService - Servicio de parámetros inyectado
+ * @returns Promise con los parámetros obtenidos
+ */
+export async function cargarParametros(parametroService: any): Promise<any[]> {
+  try {
+    const query = "tipoParametroId__CodigoAbreviacion:HSPTD,activo:true";
+    const fields = "Id,Nombre,Descripcion,CodigoAbreviacion";
+    const url = `parametro?query=${encodeURIComponent(query)}&fields=${fields}`;
+
+    const respuesta = await parametroService.get(url).toPromise();
+
+    if (respuesta?.Success && Array.isArray(respuesta?.Data)) {
+      parametrosCache = respuesta.Data;
+      return parametrosCache;
+    }
+
+    console.warn("No se obtuvieron parámetros del servicio", respuesta);
+    return [];
+  } catch (error) {
+    console.error("Error al cargar parámetros:", error);
+    return [];
+  }
+}
+
+/**
+ * Obtiene una propiedad convertida a número desde un código de abreviación
+ * @param codigoAbreviacion - Código a buscar
+ * @returns Número o null si no se encuentra
+ */
+export function obtenerValorNumericoDesdeParametro(codigoAbreviacion: string): number{
+  if (!codigoAbreviacion || parametrosCache.length === 0) {
+    return 0;
+  }
+
+  const parametro = parametrosCache.find(
+    (p: any) => normalizarTexto(p.CodigoAbreviacion) === normalizarTexto(codigoAbreviacion)
+  );
+
+  if (!parametro?.Descripcion) {
+    return 0;
+  }
+
+  const valor = parseInt(parametro.Descripcion, 10);
+  return Number.isNaN(valor) ? 0 : valor;
+}
+
+export let RESTRICCIONES_HORAS_POR_VINCULACION: Record<string, RestriccionHorasVinculacion> = {
   DCTC: {
     codigoAbreviacion: "DCTC",
     nombre: "DOCENTE DE CARRERA TIEMPO COMPLETO",
     registraHorasNoLectivas: true,
-    horasMinimas: 40,
-    horasMaximas: 40,
+    horasMinimas: obtenerValorNumericoDesdeParametro("HMINDCTC"),
+    horasMaximas: obtenerValorNumericoDesdeParametro("HMAXDCTC"),
     alias: ["CARRERA TIEMPO COMPLETO"],
   },
   TCO: {
     codigoAbreviacion: "TCO",
     nombre: "TIEMPO COMPLETO OCASIONAL",
     registraHorasNoLectivas: true,
-    horasMinimas: 20,
-    horasMaximas: 40,
+    horasMinimas: obtenerValorNumericoDesdeParametro("HMINTCO"),
+    horasMaximas: obtenerValorNumericoDesdeParametro("HMAXTCO"),
     alias: [],
   },
   MTO: {
     codigoAbreviacion: "MTO",
     nombre: "MEDIO TIEMPO OCASIONAL",
     registraHorasNoLectivas: true,
-    horasMinimas: 12,
-    horasMaximas: 20,
+    horasMinimas: obtenerValorNumericoDesdeParametro("HMINMTO"),
+    horasMaximas: obtenerValorNumericoDesdeParametro("HMAXMTO"),
     alias: [],
   },
   HCH: {
@@ -37,15 +90,15 @@ export const RESTRICCIONES_HORAS_POR_VINCULACION: Record<string, RestriccionHora
     nombre: "DOCENTE HORA CATEDRA POR HONORARIOS",
     registraHorasNoLectivas: false,
     horasMinimas: null,
-    horasMaximas: 8,
+    horasMaximas: obtenerValorNumericoDesdeParametro("HMAXHC"),
     alias: ["HORA CATEDRA POR HONORARIOS"],
   },
   DCMT: {
     codigoAbreviacion: "DCMT",
     nombre: "DOCENTE DE CARRERA MEDIO TIEMPO",
     registraHorasNoLectivas: true,
-    horasMinimas: 20,
-    horasMaximas: 20,
+    horasMinimas: obtenerValorNumericoDesdeParametro("HMINDCMT"),
+    horasMaximas: obtenerValorNumericoDesdeParametro("HMAXDCMTO"),
     alias: ["CARRERA MEDIO TIEMPO"],
   },
 };
@@ -197,4 +250,30 @@ export function validarHorasPlanDocentePorVinculacion(
     estaEnRango: restriccion ? validarHorasEnRango(totalHoras, restriccion) : null,
     horasRequeridas: restriccion?.horasMaximas ?? null,
   };
+}
+
+export function actualizarRestriccionesHoras(): void {
+  RESTRICCIONES_HORAS_POR_VINCULACION["DCTC"].horasMinimas =
+    obtenerValorNumericoDesdeParametro("HMINDCTC");
+  RESTRICCIONES_HORAS_POR_VINCULACION["DCTC"].horasMaximas =
+    obtenerValorNumericoDesdeParametro("HMAXDCTC");
+
+  RESTRICCIONES_HORAS_POR_VINCULACION["TCO"].horasMinimas =
+    obtenerValorNumericoDesdeParametro("HMINTCO");
+  RESTRICCIONES_HORAS_POR_VINCULACION["TCO"].horasMaximas =
+    obtenerValorNumericoDesdeParametro("HMAXTCO");
+
+  RESTRICCIONES_HORAS_POR_VINCULACION["MTO"].horasMinimas =
+    obtenerValorNumericoDesdeParametro("HMINMTO");
+  RESTRICCIONES_HORAS_POR_VINCULACION["MTO"].horasMaximas =
+    obtenerValorNumericoDesdeParametro("HMAXMTO");
+
+  RESTRICCIONES_HORAS_POR_VINCULACION["HCH"].horasMinimas = null;
+  RESTRICCIONES_HORAS_POR_VINCULACION["HCH"].horasMaximas =
+    obtenerValorNumericoDesdeParametro("HMAXHC");
+
+  RESTRICCIONES_HORAS_POR_VINCULACION["DCMT"].horasMinimas =
+    obtenerValorNumericoDesdeParametro("HMINDCMT");
+  RESTRICCIONES_HORAS_POR_VINCULACION["DCMT"].horasMaximas =
+    obtenerValorNumericoDesdeParametro("HMAXDCMTO");
 }
