@@ -25,6 +25,8 @@ import { PermisosUtils } from "src/app/utils/role-permissions";
 import { AcademicaJbpmService } from "src/app/services/academica-jbpm.service";
 import { TercerosService } from "src/app/services/terceros.service";
 import {
+  actualizarRestriccionesHoras,
+  cargarParametros,
   debeValidarHorasSegunRolEnvio,
   validarHorasPlanDocentePorVinculacion,
 } from "src/app/utils/ptd-hours";
@@ -158,6 +160,8 @@ export class AsignarPtdComponent implements OnInit, AfterViewInit {
         this.proyectosCoordinador =
           await this.obtenerProyectosCoordinador();
       }
+      await cargarParametros(this.parametrosService);
+      actualizarRestriccionesHoras();
       // Paralelo porque son independientes
       const [
         periodos,

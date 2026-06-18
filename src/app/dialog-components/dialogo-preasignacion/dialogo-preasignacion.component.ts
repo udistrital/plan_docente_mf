@@ -37,7 +37,7 @@ import { MODALS } from "src/app/models/diccionario";
 import { DialogoCrearEspacioGrupoComponent } from "../dialogo-crear-espacio-grupo/dialogo-crear-espacio-grupo.component";
 import { UserService } from "src/app/services/user.service";
 import { ROLES } from "src/app/models/diccionario";
-import { validarHorasPlanDocentePorVinculacion } from "src/app/utils/ptd-hours";
+import { actualizarRestriccionesHoras, cargarParametros, validarHorasPlanDocentePorVinculacion } from "src/app/utils/ptd-hours";
 
 interface HorarioEspacioInfo {
   dia: string;
@@ -540,7 +540,8 @@ export class DialogoPreAsignacionPtdComponent implements OnInit {
       if (!planToValidate) {
         return true;
       }
-
+      await cargarParametros(this.parametrosService);
+      actualizarRestriccionesHoras();
       const validacionHoras = validarHorasPlanDocentePorVinculacion(
         planToValidate,
         codigoAbreviacion
