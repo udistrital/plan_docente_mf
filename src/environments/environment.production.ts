@@ -1,6 +1,6 @@
 export const environment = {
     production: true,
-    apiUrl: "https://sgaplandocente.portaloas.udistrital.edu.co/",
+    apiUrl: "https://plandocente.portaloas.udistrital.edu.co/",
     PARAMETROS_SERVICE: 'https://autenticacion.portaloas.udistrital.edu.co/apioas/parametros/v1/',
     PLAN_TRABAJO_DOCENTE_SERVICE: 'https://autenticacion.portaloas.udistrital.edu.co/apioas/plan_trabajo_docente_crud/v1/',
     SGA_PLAN_TRABAJO_DOCENTE_MID_SERVICE: 'https://autenticacion.portaloas.udistrital.edu.co/apioas/plan_trabajo_docente_mid/v1/',
