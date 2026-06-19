@@ -5,16 +5,16 @@ import { MatSort } from '@angular/material/sort';
 import { MatTableDataSource } from '@angular/material/table';
 import { TranslateService } from '@ngx-translate/core';
 import { PopUpManager } from 'src/app/managers/popUpManager';
-import { MODALS, VIEWS } from 'src/app/models/diccionario';
+import { MODALS, ROLES, VIEWS } from 'src/app/models/diccionario';
 import { Periodo } from 'src/app/models/parametros/periodo';
 import { EstadoConsolidado } from 'src/app/models/plan-trabajo-docente/estado-consolidado';
 import { RespFormat } from 'src/app/models/response-format';
 import { ParametrosService } from 'src/app/services/parametros.service';
 import { PlanTrabajoDocenteService } from 'src/app/services/plan-trabajo-docente.service';
-import { ProyectoAcademicoService } from 'src/app/services/proyecto-academico.service';
 import { TercerosService } from 'src/app/services/terceros.service';
 import { UserService } from 'src/app/services/user.service';
 import { GestorDocumentalService } from 'src/app/services/gestor-documental.service';
+import { SgaPlanTrabajoDocenteMidService } from 'src/app/services/sga-plan-trabajo-docente-mid.service';
 import { checkContent, checkResponse } from 'src/app/utils/verify-response';
 import { cloneDeep as _cloneDeep } from 'lodash-es';
 import { PermisosUtils } from 'src/app/utils/role-permissions';
@@ -32,29 +32,23 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
 
   readonly VIEWS = VIEWS;
   readonly ESTADOS = {
-    DEF: '64d1b9ab7344af1caa53ea59',
     ENV: '64e4c32cd9308025c135db2d',
-    AVA: '64e4c34cd93080396f35db2f',
     APR: '64e4c382d93080d1e835db31',
     N_APR: '64e4c3a5d93080299535db34',
-    ENV_AVA: '64e61208a659b2fca5b0bd6a',
   };
   vista: Symbol;
 
-  isSecDecanatura = false;
-  isDecano = false;
+  roles: string[] = [];
 
   opcionesPermisos: string[] = [
     'ver_gestion_consolidado',
     'editar_gestion_consolidado',
-    'enviar_secDecanatura',
-    'aprobar_decanatura',
     'ver_consolidados_decanatura',
   ];
   permisos: { [key: string]: boolean } = {};
 
   dataSource: MatTableDataSource<any>;
-  displayedColumns: string[] = ["proyecto_curricular", "codigo", "fecha_radicado", "periodo_academico", "gestion", "estado", "enviar"];
+  displayedColumns: string[] = ["proyecto_curricular", "codigo", "fecha_radicado", "periodo_academico", "gestion", "estado"];
   @ViewChild(MatPaginator) paginator!: MatPaginator;
   @ViewChild(MatSort) sort!: MatSort;
 
@@ -68,16 +62,24 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
   archivoSoporteUrl: string | null = null;
   archivoSoporteNombre: string | null = null;
   opcionesDecision: { id: string; nombre: string }[] = [];
-  
+  codigoEventoPTD: string = '';
+  calendarEventosPTD: any[] = [];
+  calendarEventoSeleccionado: any = null;
+  enRangoCalendario: boolean = false;
+  _todosLosPeriodos: Periodo[] = [];
+  hasAttemptedToLoad = false;
+  documentoDocenteConsulta: string = '';
+  terceroIdConsulta: number | null = null;
+
   constructor(
     private userService: UserService,
     private translate: TranslateService,
     private popUpManager: PopUpManager,
     private parametrosService: ParametrosService,
-    private proyectoAcademicoService: ProyectoAcademicoService,
     private planTrabajoDocenteService: PlanTrabajoDocenteService,
     private tercerosService: TercerosService,
     private gestorDocumentalService: GestorDocumentalService,
+    private sgaPlanTrabajoDocenteMidService: SgaPlanTrabajoDocenteMidService,
     private builder: FormBuilder,
     private permisosUtils:PermisosUtils,
   ) {
@@ -89,26 +91,243 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
     this.formRevConsolidado = this.builder.group({});
   }
 
-  ngOnInit() {
-    this.userService.getUserRoles().then(async roles => {
-      const observables: { [key: string]: Observable<boolean> } = {};
-      this.opcionesPermisos.forEach(opcion => {
-        observables[opcion] =
-          this.permisosUtils.tienePermiso(roles, opcion);
-      });
-      const resultados = await firstValueFrom(forkJoin(observables));
-      this.permisos = resultados;
-      this.isSecDecanatura = !!this.permisos['enviar_secDecanatura'];
-      this.isDecano = !!this.permisos['aprobar_decanatura'];
+  async ngOnInit() {
+    this.popUpManager.showLoading();
+    try {
+      const roles = await this.userService.getUserRoles();
+      this.roles = roles;
+
+      if (!this.roles.includes('ADMIN_SGA')) {
+        await this.cargarEventoPTD();
+      }
+
+      if (this.roles.includes('ADMIN_SGA')) {
+        this.permisos = {
+          ver_gestion_consolidado: true,
+          editar_gestion_consolidado: false,
+          ver_consolidados_decanatura: true
+        };
+      } else {
+        const observables: { [key: string]: Observable<boolean> } = {};
+        this.opcionesPermisos.forEach(opcion => {
+          observables[opcion] =
+            this.permisosUtils.tienePermiso(roles, opcion);
+        });
+        const resultados = await firstValueFrom(forkJoin(observables));
+        this.permisos = resultados;
+      }
       console.log("Permisos cargados:", this.permisos);
-    });
-    this.loadSelects();
-    this.buildForm();
+      await this.loadSelects();
+      this.buildForm();
+    } catch (err) {
+      this.popUpManager.showErrorAlert(this.translate.instant("ERROR.persiste_error_comunique_OAS"));
+    } finally {
+      this.popUpManager.closeLoading();
+    }
   }
 
   ngAfterViewInit() {
-    this.dataSource.paginator = this.paginator;
-    this.dataSource.sort = this.sort;
+    this.conectarPaginadorYOrdenador();
+  }
+
+  private conectarPaginadorYOrdenador() {
+    if (this.paginator) {
+      this.dataSource.paginator = this.paginator;
+    }
+    if (this.sort) {
+      this.dataSource.sort = this.sort;
+    }
+  }
+
+  private configurarDataSource(data: any[] = []) {
+    const dataSource = new MatTableDataSource(data);
+    dataSource.paginator = this.paginator;
+    dataSource.sort = this.sort;
+    return dataSource;
+  }
+
+  async cargarEventoPTD(): Promise<void> {
+      const resp: any = await firstValueFrom(
+        this.sgaPlanTrabajoDocenteMidService.get("calendario/eventos")
+      );
+  
+      if (checkContent(resp)) {
+  
+        const eventos = Array.isArray(resp.Data)
+          ? resp.Data
+          : [];
+  
+        const evento = eventos.find(
+          (e: any) =>
+            e.Descripcion === "PLANES DE TRABAJO DOCENTES"
+        );
+  
+        if (evento) {
+            this.codigoEventoPTD = evento.CodigoEvento;
+          }
+      }
+    }
+
+  private async obtenerDocumentoCoordinador(): Promise<string | null> {
+    if (this.roles.includes('ADMIN_SGA')) {
+      return this.documentoDocenteConsulta || null;
+    }
+    return this.userService.getUserDocument();
+  }
+
+  cargarCalendarioEventos(proyectoId?: string): Promise<any[]> {
+    return new Promise((resolve, reject) => {
+      this.obtenerDocumentoCoordinador().then((documento) => {
+        if (!documento || !this.codigoEventoPTD) {
+          reject(new Error('No se pudo obtener documento o código de evento'));
+          return;
+        }
+        const proyectoQuery = proyectoId ? `&proyecto=${proyectoId}` : '';
+        this.sgaPlanTrabajoDocenteMidService.get(
+          `calendario/calendario_eventos?documento=${documento}&codigo_evento=${this.codigoEventoPTD}${proyectoQuery}`
+        ).subscribe({
+          next: (calResp: any) => {
+            const data = calResp?.Data ?? calResp ?? [];
+            const dataArr = Array.isArray(data) ? data : [data];
+            const adjustedData = dataArr.map((evento: any) => {
+              if (evento) {
+                const adjusted = { ...evento };
+                if (evento.FechaInicio) {
+                  const dateInit = new Date(evento.FechaInicio);
+                  if (!isNaN(dateInit.getTime())) {
+                    dateInit.setHours(dateInit.getHours() + 5);
+                    adjusted.FechaInicio = dateInit.toISOString();
+                  }
+                }
+                if (evento.FechaFin) {
+                  const dateFin = new Date(evento.FechaFin);
+                  if (!isNaN(dateFin.getTime())) {
+                    dateFin.setHours(dateFin.getHours() + 5);
+                    adjusted.FechaFin = dateFin.toISOString();
+                  }
+                }
+                return adjusted;
+              }
+              return evento;
+            });
+            resolve(adjustedData);
+          },
+          error: (err: any) => {
+            console.warn("Error obteniendo calendario/calendario_eventos:", err);
+            reject(err);
+          }
+        });
+      }).catch(reject);
+    });
+  }
+
+  async cargarProyectosFacultadDecano(): Promise<void> {
+    try {
+      // 1. Obtención síncrona del documento del usuario
+      const documento = await this.obtenerDocumentoCoordinador();
+      if (!documento) {
+        throw new Error('No se pudo obtener documento del usuario');
+      }
+
+      // 2. Consumo asíncrono del MID Service
+      const resp: any = await firstValueFrom(
+        this.sgaPlanTrabajoDocenteMidService.get(
+          `calendario/proyectos_facultad_decano?documento=${documento}`
+        )
+      );
+
+      // 3. Validación de contenido de la respuesta
+      if (!checkContent(resp)) {
+        throw new Error('No se encontraron proyectos para la facultad del decano');
+      }
+
+      // 4. Mapeo y filtrado limpio de los datos (Estructura interna plana)
+      const proyectosRaw = Array.isArray(resp.Data) ? resp.Data : [];
+      
+      this.proyectos.opciones = proyectosRaw
+        .map((proyecto: any) => this.mapearProyecto(proyecto))
+        .filter((proyecto: any) => proyecto.Id && proyecto.Nombre);
+
+    } catch (err) {
+      console.warn('Error en cargarProyectosFacultadDecano:', err);
+      // Lanzamos el error para mantener la firma semántica del 'reject' original
+      throw err; 
+    }
+  }
+
+  // Método auxiliar privado para delegar la responsabilidad del mapeo (Clean Code)
+  private mapearProyecto(proyecto: any): any {
+    return {
+      Id: String(proyecto.Id ?? proyecto.Codigo ?? '').trim(),
+      Codigo: String(proyecto.Codigo ?? proyecto.Id ?? '').trim(),
+      Nombre: String(proyecto.Nombre ?? '').trim(),
+      CodigoFacultad: String(proyecto.CodigoFacultad ?? '').trim(),
+      Facultad: String(proyecto.Facultad ?? '').trim(),
+      Nivel: String(proyecto.Nivel ?? '').trim(),
+    };
+  }
+
+  filtrarPeriodosPorCalendario() {
+    if (!this.calendarEventosPTD || this.calendarEventosPTD.length === 0) {
+      this.periodos.opciones = [];
+      return;
+    }
+    const eventosDelProyecto = this.calendarEventosPTD.filter((e: any) =>
+      String(e.CodigoProyecto) === String(this.proyectos.select?.Id)
+    );
+    const todosLosPeriodos = this._todosLosPeriodos || this.periodos.opciones;
+    const vistos = new Set<string>();
+    this.periodos.opciones = todosLosPeriodos.filter((periodo: Periodo) => {
+      const evento = eventosDelProyecto.find((e: any) =>
+        String(e.Year) === String(periodo.Year) &&
+        String(e.Ciclo) === String(periodo.Ciclo)
+      );
+      if (evento) {
+        if (vistos.has(periodo.Nombre)) return false;
+        vistos.add(periodo.Nombre);
+
+        periodo.InicioVigencia = evento.FechaInicio;
+        periodo.FinVigencia = evento.FechaFin;
+        const ahora = new Date();
+        const fechaInicio = new Date(evento.FechaInicio);
+        const fechaFin = new Date(evento.FechaFin);
+        periodo.Activo = ahora >= fechaInicio && ahora <= fechaFin;
+        return true;
+      }
+      return false;
+    });
+  }
+
+  verificarRangoFechas() {
+    this.enRangoCalendario = false;
+    this.calendarEventoSeleccionado = null;
+    if (!this.periodos.select || !this.proyectos.select || !this.calendarEventosPTD || this.calendarEventosPTD.length === 0) {
+      return;
+    }
+    const eventoMatch = this.calendarEventosPTD.find((evento: any) =>
+      String(evento.CodigoProyecto) === String(this.proyectos.select.Id) &&
+      String(evento.Year) === String(this.periodos.select.Year) &&
+      String(evento.Ciclo) === String(this.periodos.select.Ciclo)
+    );
+    if (eventoMatch) {
+      this.calendarEventoSeleccionado = eventoMatch;
+      const ahora = new Date();
+      const fechaInicio = new Date(eventoMatch.FechaInicio);
+      const fechaFin = new Date(eventoMatch.FechaFin);
+      this.enRangoCalendario = ahora >= fechaInicio && ahora <= fechaFin;
+      console.log('--- Revision Consolidado: Verificar Rango Fechas ---');
+      console.log('Fecha actual:', ahora);
+      console.log('Fecha Inicio Evento:', fechaInicio);
+      console.log('Fecha Fin Evento:', fechaFin);
+      console.log('¿Está en rango?:', this.enRangoCalendario);
+    }
+  }
+
+  esModoLecturaPorCalendario(): boolean {
+    if (this.roles.includes('ADMIN_SGA')) {
+      return true;
+    }
+    return !!this.periodos.select?.Id && !this.enRangoCalendario;
   }
 
   applyFilter(event: Event) {
@@ -148,26 +367,6 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
     this.revisarConsolidado(event.rowData.ConsolidadoJson, readonly);
   }
 
-  accionEnviar(event: any) {
-    if (!this.permisos['aprobar_decanatura']) {
-      this.popUpManager.showErrorAlert(
-        this.translate.instant('GLOBAL.acceso_denegado')
-      );
-      return;
-    }
-    let putPlan = _cloneDeep(event.rowData.ConsolidadoJson);
-    putPlan.estado_consolidado_id = this.ESTADOS.ENV_AVA;
-    this.planTrabajoDocenteService.put('consolidado_docente/'+putPlan._id, putPlan).subscribe(
-      () => {
-        this.popUpManager.showSuccessAlert(this.translate.instant('ptd.actualizar_consolidado_ok'))
-        this.listarConsolidados();
-      }, err => {
-        console.warn(err);
-        this.popUpManager.showErrorAlert(this.translate.instant('ptd.fallo_actualizar_consolidado'))
-      }
-    );
-  }
-
   loadPeriodo(): Promise<Periodo[]> {
     return new Promise((resolve, reject) => {
       this.parametrosService.get('periodo?query=CodigoAbreviacion:PA&sortby=Id&order=desc&limit=0').subscribe({
@@ -185,22 +384,6 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
     });
   }
 
-  loadProyectos(): Promise<any[]> {
-    return new Promise((resolve, reject) => {
-      this.proyectoAcademicoService.get('proyecto_academico_institucion?query=Activo:true&sortby=Nombre&order=asc&limit=0').subscribe({
-        next: (resp: any) => {
-          if (checkContent(resp)) {
-            resolve(resp as any[]);
-          } else {
-            reject(new Error('No se encontraron proyectos'));
-          }
-        },
-        error: (err) => {
-          reject(err);
-        }
-      });
-    });
-  }
 
   cargarEstadosConsolidado(): Promise<EstadoConsolidado[]> {
     return new Promise((resolve, reject) => {
@@ -222,8 +405,11 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
   async loadSelects() {
     try {
       let promesas: Promise<void>[] = [];
-      promesas.push(this.loadPeriodo().then(periodos => {this.periodos.opciones = periodos}));
-      promesas.push(this.loadProyectos().then(proyectos => {this.proyectos.opciones = proyectos;}));
+      promesas.push(this.cargarProyectosFacultadDecano());
+      promesas.push(this.loadPeriodo().then(periodos => {
+        this.periodos.opciones = periodos;
+        this._todosLosPeriodos = [...periodos];
+      }));
       promesas.push(this.cargarEstadosConsolidado().then(estadosConsolidado => {
         this.estadosConsolidado.opciones = estadosConsolidado;
       }));
@@ -237,6 +423,80 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
     }
   }
 
+  onProyectoChange() {
+    this.periodos.select = undefined;
+    this.periodos.opciones = [];
+    this.dataSource = this.configurarDataSource();
+    this.hasAttemptedToLoad = false;
+    this.conectarPaginadorYOrdenador();
+    if (this.proyectos.select) {
+      this.cargarCalendarioEventos(this.proyectos.select.Id).then(eventosCalendario => {
+        this.calendarEventosPTD = eventosCalendario;
+        this.filtrarPeriodosPorCalendario();
+      }).catch((err) => {
+        this.calendarEventosPTD = [];
+        this.periodos.opciones = [];
+        console.warn(err);
+      });
+    }
+  }
+
+  async procesarDocumentoSuperusuario() {
+    if (!this.documentoDocenteConsulta) {
+      this.proyectos.opciones = [];
+      this.periodos.opciones = [];
+      this.proyectos.select = null;
+      this.periodos.select = null;
+      this.dataSource.data = [];
+      this.terceroIdConsulta = null;
+      return;
+    }
+
+    this.popUpManager.showLoading();
+    try {
+      // 1. Resolve TerceroId
+      const queryUrl = `datos_identificacion?query=Activo:true,Numero:${this.documentoDocenteConsulta}&sortby=FechaCreacion&order=desc`;
+      const respTercero = await firstValueFrom(this.tercerosService.get(queryUrl));
+      const dataTercero = respTercero?.Data ?? respTercero ?? [];
+      if (!Array.isArray(dataTercero) || dataTercero.length === 0 || !dataTercero[0]?.TerceroId?.Id) {
+        this.popUpManager.showErrorToast(this.translate.instant("ptd.error_no_found_docente"));
+        this.proyectos.opciones = [];
+        this.periodos.opciones = [];
+        this.proyectos.select = null;
+        this.periodos.select = null;
+        this.dataSource.data = [];
+        this.terceroIdConsulta = null;
+        return;
+      }
+      this.terceroIdConsulta = dataTercero[0].TerceroId.Id;
+
+      // 2. Load calendar events and projects for this teacher's document
+      await this.cargarProyectosFacultadDecano();
+      await this.cargarEventoPTD();
+      
+      this.proyectos.select = null;
+      this.periodos.select = null;
+      this.periodos.opciones = [];
+      this.dataSource.data = [];
+      this.hasAttemptedToLoad = false;
+    } catch (err) {
+      console.error(err);
+      this.popUpManager.showErrorToast(this.translate.instant("ERROR.persiste_error_comunique_OAS"));
+    } finally {
+      this.popUpManager.closeLoading();
+    }
+  }
+
+  onPeriodoChange() {
+    this.dataSource = this.configurarDataSource();
+    this.hasAttemptedToLoad = false;
+    this.conectarPaginadorYOrdenador();
+    if (this.periodos.select) {
+      this.verificarRangoFechas();
+      this.listarConsolidados();
+    }
+  }
+
   listarConsolidados() {
     if (!this.permisos['ver_consolidados_decanatura']) {
       this.popUpManager.showErrorAlert(
@@ -246,28 +506,33 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
     }
     if (this.periodos.select) {
       let proyecto = ""
-      if (this.proyectos.select) {
+      if (this.proyectos.select && !this.roles.includes(ROLES.DOCENTE)) {
         proyecto = ",proyecto_academico_id:"+this.proyectos.select.Id;
       }
       this.planTrabajoDocenteService.get(`consolidado_docente?query=activo:true,periodo_id:${this.periodos.select.Id}${proyecto}&limit=0`).subscribe((resp) => {
         const idEstadosFiltro = this.idEstadosSegunPermisos();
         let rawlistarConsolidados = <any[]>resp.Data;
-        rawlistarConsolidados = rawlistarConsolidados.filter(consolidado => idEstadosFiltro.includes(consolidado.estado_consolidado_id));
-        const formatedData = this.estilizarDatosSegunPermisos(rawlistarConsolidados);
-        this.dataSource = new MatTableDataSource(formatedData);
+        if (!rawlistarConsolidados || rawlistarConsolidados.length === 0) {
+          this.dataSource = this.configurarDataSource();
+        } else {
+          rawlistarConsolidados = rawlistarConsolidados.filter(consolidado => idEstadosFiltro.includes(consolidado.estado_consolidado_id));
+          const formatedData = this.estilizarDatosSegunPermisos(rawlistarConsolidados);
+          this.dataSource = this.configurarDataSource(formatedData);
+        }
+        this.conectarPaginadorYOrdenador();
+        this.hasAttemptedToLoad = true;
       }, (err) => {
-        this.dataSource = new MatTableDataSource();
+        this.dataSource = this.configurarDataSource();
+        this.conectarPaginadorYOrdenador();
+        this.hasAttemptedToLoad = true;
         console.warn(err);
       });
     }
   }
 
   idEstadosSegunPermisos(): string[] {
-    if (this.permisos['enviar_secDecanatura']) {
-      return [this.ESTADOS.ENV, this.ESTADOS.AVA, this.ESTADOS.N_APR, this.ESTADOS.ENV_AVA];
-    }
-    if (this.permisos['aprobar_decanatura']) {
-      return [this.ESTADOS.ENV_AVA, this.ESTADOS.APR, this.ESTADOS.N_APR];
+    if (this.roles.includes(ROLES.DECANO) || this.roles.includes('ADMIN_SGA')) {
+      return [this.ESTADOS.ENV, this.ESTADOS.APR, this.ESTADOS.N_APR];
     }
     return [];
   }
@@ -279,10 +544,7 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
       const periodo = this.periodos.opciones.find(periodo => periodo.Id == consolidado.periodo_id);
       const estadoConsolidado = this.estadosConsolidado.opciones.find(estado => estado._id == consolidado.estado_consolidado_id);
       let opcionGestion = "ver";
-      if ((consolidado.estado_consolidado_id === this.ESTADOS.ENV) && this.permisos['enviar_secDecanatura']) {
-        opcionGestion = "editar";
-      }
-      if ((consolidado.estado_consolidado_id === this.ESTADOS.ENV_AVA) && this.permisos['aprobar_decanatura']) {
+      if (!this.esModoLecturaPorCalendario() && consolidado.estado_consolidado_id === this.ESTADOS.ENV && this.roles.includes(ROLES.DECANO)) {
         opcionGestion = "editar";
       }
       formatedData.push({
@@ -292,7 +554,6 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
         "periodo_academico": periodo ? periodo.Nombre : "",
         "gestion": { value: undefined, type: opcionGestion, disabled: !this.permisos['ver_gestion_consolidado'] },
         "estado": estadoConsolidado ? estadoConsolidado.nombre : consolidado.estado_consolidado_id,
-        "enviar": { value: undefined, type: 'enviar', disabled: !this.permisos['enviar_secDecanatura'] || (consolidado.estado_consolidado_id !== this.ESTADOS.AVA) },
         "ConsolidadoJson": consolidado
       })
     })
@@ -312,11 +573,7 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
     this.formRevConsolidado.patchValue({
       ArchivoSoporte: '',
       QuienResponde: '',
-      Rol: this.permisos['enviar_secDecanatura']
-        ? 'Secretaria Decanatura'
-        : this.permisos['aprobar_decanatura']
-          ? 'Decanatura'
-          : '',
+      Rol: 'Decanatura',
       CumpleNorma: !!consolidado.cumple_normativa,
       Observaciones: '',
       Decision: '',
@@ -325,13 +582,7 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
     this.configurarOpcionesPorPermisos();
 
     const estadoActualId = consolidado.estado_consolidado_id;
-    if (this.isSecDecanatura) {
-      const decisionSec = estadoActualId === this.ESTADOS.N_APR ? this.ESTADOS.N_APR : this.ESTADOS.AVA;
-      if ([this.ESTADOS.AVA, this.ESTADOS.N_APR, this.ESTADOS.ENV_AVA].includes(estadoActualId)) {
-        this.formRevConsolidado.patchValue({ Decision: decisionSec });
-      }
-    }
-    if (this.isDecano && [this.ESTADOS.APR, this.ESTADOS.N_APR].includes(estadoActualId)) {
+    if (this.roles.includes(ROLES.DECANO) && [this.ESTADOS.APR, this.ESTADOS.N_APR].includes(estadoActualId)) {
       this.formRevConsolidado.patchValue({ Decision: estadoActualId });
     }
 
@@ -342,18 +593,20 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
 
     const respuestaDecanatura = this.parseJson(this.revConsolidadoInfo.respuesta_decanatura, { sec: {}, dec: {} });
     let terceroId = 0;
-    if (this.isSecDecanatura && respuestaDecanatura?.sec) {
-      this.formRevConsolidado.patchValue({ Observaciones: respuestaDecanatura.sec.observacion || '' });
-      terceroId = respuestaDecanatura.sec.responsable_id || 0;
-    }
-    if (this.isDecano && respuestaDecanatura?.dec) {
-      this.formRevConsolidado.patchValue({ Observaciones: respuestaDecanatura.dec.observacion || '' });
+    if (respuestaDecanatura?.dec) {
+      this.formRevConsolidado.patchValue({ Observaciones: this.normalizarTextoObservacion(respuestaDecanatura.dec.observacion || '') });
       terceroId = respuestaDecanatura.dec.responsable_id || 0;
     }
 
     if (!terceroId) {
       this.userService.getPersonaId().then((personaId) => {
         this.cargarResponsable(personaId);
+      }).catch(() => {
+        if (this.roles.includes('ADMIN_SGA')) {
+          this.formRevConsolidado.patchValue({
+            QuienResponde: 'ADMIN_SGA',
+          });
+        }
       });
     } else {
       this.cargarResponsable(terceroId);
@@ -367,9 +620,6 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
       this.formRevConsolidado.get('ArchivoSoporte')?.disable();
       this.formRevConsolidado.get('QuienResponde')?.disable();
       this.formRevConsolidado.get('Rol')?.disable();
-      if (!this.isSecDecanatura) {
-        this.formRevConsolidado.get('CumpleNorma')?.disable();
-      }
     }
   }
 
@@ -380,25 +630,24 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
     }
 
     const putPlan = _cloneDeep(this.revConsolidadoInfo);
-    const personaId = await this.userService.getPersonaId();
+    let personaId: number;
+    try {
+      personaId = await this.userService.getPersonaId();
+    } catch {
+      personaId = 0;
+    }
+    const nombreDecano = personaId ? await this.obtenerNombreDecano(personaId) : 'ADMIN_SGA';
     const respuestaDecanatura = this.parseJson(putPlan.respuesta_decanatura, { sec: {}, dec: {} });
+    const observacionLimpia = this.normalizarTextoObservacion(this.formRevConsolidado.get('Observaciones')?.value || '');
+    const fechaRegistro = this.formatoFecha(new Date().toISOString());
 
-    if (this.permisos['enviar_secDecanatura']) {
-      respuestaDecanatura.sec = {
-        ...respuestaDecanatura.sec,
-        responsable_id: personaId,
-        observacion: this.formRevConsolidado.get('Observaciones')?.value,
-      };
-      putPlan.cumple_normativa = !!this.formRevConsolidado.get('CumpleNorma')?.value;
-    }
-
-    if (this.permisos['aprobar_decanatura']) {
-      respuestaDecanatura.dec = {
-        ...respuestaDecanatura.dec,
-        responsable_id: personaId,
-        observacion: this.formRevConsolidado.get('Observaciones')?.value,
-      };
-    }
+    respuestaDecanatura.dec = {
+      ...respuestaDecanatura.dec,
+      responsable_id: personaId,
+      rol: 'Decano',
+      observacion: `[${nombreDecano}] - ${fechaRegistro}:\n\n${observacionLimpia}`,
+    };
+    putPlan.cumple_normativa = !!this.formRevConsolidado.get('CumpleNorma')?.value;
 
     putPlan.estado_consolidado_id = this.formRevConsolidado.get('Decision')?.value;
     putPlan.aprobado = putPlan.estado_consolidado_id === this.ESTADOS.APR;
@@ -417,20 +666,11 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
   }
 
   private configurarOpcionesPorPermisos() {
-    if (this.permisos['enviar_secDecanatura']) {
-      this.opcionesDecision = [
-        { id: this.ESTADOS.AVA, nombre: 'Enviar para aprobacion por decanatura' },
-        { id: this.ESTADOS.N_APR, nombre: 'Enviar a coordinacion para su revision' },
-      ];
-      this.formRevConsolidado.get('CumpleNorma')?.enable();
-      return;
-    }
-
     this.opcionesDecision = [
       { id: this.ESTADOS.APR, nombre: 'Aprobar consolidado' },
       { id: this.ESTADOS.N_APR, nombre: 'No aprobar consolidado' },
     ];
-    this.formRevConsolidado.get('CumpleNorma')?.disable();
+    this.formRevConsolidado.get('CumpleNorma')?.enable();
   }
 
   private cargarArchivoSoporte(documentoId: number) {
@@ -476,6 +716,16 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
     });
   }
 
+  private async obtenerNombreDecano(terceroId: number): Promise<string> {
+    try {
+      const resTerc: any = await firstValueFrom(this.tercerosService.get('tercero/' + terceroId));
+      const nombreCompleto = String(resTerc?.NombreCompleto || '').trim();
+      return nombreCompleto || 'Decano';
+    } catch {
+      return 'Decano';
+    }
+  }
+
   private parseJson(value: any, defaultValue: any) {
     if (!value) {
       return defaultValue;
@@ -485,6 +735,18 @@ export class RevisionConsolidadoComponent implements OnInit, AfterViewInit {
     } catch {
       return defaultValue;
     }
+  }
+
+  private normalizarTextoObservacion(observacion: string): string {
+    const texto = String(observacion || '').trim();
+    if (!texto) {
+      return '';
+    }
+
+    return texto
+      .replace(/^\[(decano|decanatura|secretar[ií]a decanatura)\]\s*-\s*[^:]*:\s*/i, '')
+      .replace(/^(secretar[ií]a\s+decanatura|decanatura|decano)\s*:\s*/i, '')
+      .trim();
   }
 
   regresar() {

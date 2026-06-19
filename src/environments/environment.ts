@@ -11,7 +11,7 @@ export const environment = {
     "https://autenticacion.portaloas.udistrital.edu.co/apioas/espacios_academicos_crud/v1/",
   TERCEROS_SERVICE:
     "https://autenticacion.portaloas.udistrital.edu.co/apioas/terceros_crud/v1/",
-  OIKOS_SERVICE:
+  ACADEMICA_JBPM_SERVICE:
     "https://autenticacion.portaloas.udistrital.edu.co/apioas/academica_jbpm/v2/",
   SGA_ESPACIOS_ACADEMICOS_MID_SERVICE:
     "http://pruebasapi3.intranetoas.udistrital.edu.co:8553/v1/",

@@ -6,7 +6,7 @@ export const environment = {
     SGA_PLAN_TRABAJO_DOCENTE_MID_SERVICE: 'https://autenticacion.portaloas.udistrital.edu.co/apioas/plan_trabajo_docente_mid/v1/',
     ESPACIOS_ACADEMICOS_SERVICE: 'https://autenticacion.portaloas.udistrital.edu.co/apioas/espacios_academicos_crud/v1/',
     TERCEROS_SERVICE: 'https://autenticacion.portaloas.udistrital.edu.co/apioas/terceros_crud/v1/',
-    OIKOS_SERVICE: 'https://autenticacion.portaloas.udistrital.edu.co/apioas/oikos_crud_api/v2/',
+    ACADEMICA_JBPM_SERVICE: 'https://autenticacion.portaloas.udistrital.edu.co/apioas/academica_jbpm/v2/',
     SGA_ESPACIOS_ACADEMICOS_MID_SERVICE: 'https://autenticacion.portaloas.udistrital.edu.co/apioas/sga_espacios_academicos_mid/v1/',
     FIRMA_ELECTRONICA_MID_SERVICE: 'https://autenticacion.portaloas.udistrital.edu.co/apioas/firma_electronica_mid/v1/',
     GESTOR_DOCUMENTAL_MID_SERVICE: 'https://autenticacion.portaloas.udistrital.edu.co/apioas/gestor_documental_mid/v1/',

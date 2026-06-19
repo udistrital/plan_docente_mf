@@ -6,13 +6,52 @@
         <h2>{{ "ptd.asignacion_ptd" | translate }}</h2>
       </mat-card-title>
     </mat-card-header>
+
+    <!-- Input de Documento Docente para ADMIN_SGA (General, Paso 1) -->
+    <div *ngIf="roles.includes('ADMIN_SGA')" style="padding: 0 16px 16px 16px;">
+      <div class="row">
+        <div class="col-12">
+          <mat-form-field class="form-field" style="width: 100%">
+            <mat-label>{{ "ptd.documento_docente" | translate }}</mat-label>
+            <input matInput [(ngModel)]="documentoDocenteConsulta" (change)="procesarDocumentoSuperusuario()" placeholder="Ej. 79702248" />
+          </mat-form-field>
+        </div>
+      </div>
+    </div>
+
     <mat-card-content>
+      <mat-toolbar *ngIf="permisos['asignaciones_docente'] && permisos['asignaciones_coordinador']" style="display: flex; gap: 1em; background-color: transparent; box-shadow: none;">
+        <button mat-raised-button [color]="vistaActiva === 'docente' ? 'primary' : ''" (click)="cambiarVista('docente')">
+          {{ "ptd.vista_docente" | translate }}
+        </button>
+        <button mat-raised-button [color]="vistaActiva === 'coordinador' ? 'primary' : ''" (click)="cambiarVista('coordinador')">
+          {{ "ptd.vista_coordinador" | translate }}
+        </button>
+      </mat-toolbar>
+
       <h3 class="margin-y">{{ "ptd.list_docente" | translate }}</h3>
-      <mat-form-field class="form-field">
-        <mat-label>{{ "GLOBAL.periodo" | translate }}:</mat-label>
-        <mat-select (selectionChange)="selectPeriodo($event)">
+      <div class="alert info" *ngIf="esModoLecturaPorCalendario()">
+        <mat-icon class="icon">lock</mat-icon>
+        Modo lectura debido a restricciones de calendario
+      </div>
+      <div class="row">
+        <div class="col-6">
+          <mat-form-field class="form-field" style="width: 100%">
+        <mat-label>{{ "GLOBAL.proyecto_academico" | translate }}:</mat-label>
+        <mat-select (selectionChange)="selectProyecto($event)" [(ngModel)]="proyecto" [disabled]="!proyectos || proyectos.length === 0">
           <mat-option>--{{ "GLOBAL.seleccionar" | translate }}--</mat-option>
-          <mat-option *ngFor="let item of periodos" [value]="item">
+          <mat-option *ngFor="let item of proyectos" [value]="item">
+            {{ item.Codigo }} - {{ item.Nombre }}
+          </mat-option>
+        </mat-select>
+          </mat-form-field>
+        </div>
+        <div class="col-6">
+          <mat-form-field class="form-field" style="width: 100%">
+        <mat-label>{{ "GLOBAL.periodo" | translate }}:</mat-label>
+        <mat-select (selectionChange)="selectPeriodo($event)" [disabled]="!proyecto">
+          <mat-option>--{{ "GLOBAL.seleccionar" | translate }}--</mat-option>
+          <mat-option *ngFor="let item of periodosFiltrados" [value]="item">
             <div style="display: flex; flex-wrap: wrap; align-items: center">
               <div
                 class="badge"
@@ -24,20 +63,21 @@
               ></div>
               <b>{{ item.Nombre }}</b>
               <small style="margin-left: 5px; font-size: 0.8em; color: gray">
-                (Inicio vigencia:
-                {{ item.InicioVigencia | date : "yyyy-MM-dd" }})
+                (Vigencia: {{ item.InicioVigencia | date : "yyyy-MM-dd" }} a {{ item.FinVigencia | date : "yyyy-MM-dd" }})
               </small>
             </div>
           </mat-option>
         </mat-select>
-      </mat-form-field>
+          </mat-form-field>
+        </div>
+      </div>
 
       <!-- BARRA DE HERRAMIENTAS -->
       <mat-toolbar style="display: flex; gap: 0.5em; flex-wrap: wrap">
         <button
           mat-flat-button
           color="warn"
-          *ngIf="periodo.Id"
+          [disabled]="!proyecto || !periodo.Id"
           (click)="loadAsignaciones()"
           [matTooltip]="'GLOBAL.actualizar' | translate"
         >
@@ -118,9 +158,9 @@
               <b>{{ "ptd.observaciones" | translate }}</b>
             </mat-header-cell>
             <mat-cell *matCellDef="let row">
-              <div class="semaforo-container" [matTooltip]="getSemaforoEstado(row.estado, row.tiene_observaciones).tooltip">
-                <mat-icon class="semaforo-icon" [ngStyle]="{ color: getSemaforoEstado(row.estado, row.tiene_observaciones).color }">
-                  {{ getSemaforoEstado(row.estado, row.tiene_observaciones).icon }}
+              <div class="semaforo-container" [matTooltip]="(row.semaforo || getSemaforoEstado(row.estado, row.tiene_observaciones)).tooltip">
+                <mat-icon class="semaforo-icon" [ngStyle]="{ color: (row.semaforo || getSemaforoEstado(row.estado, row.tiene_observaciones)).color }">
+                  {{ (row.semaforo || getSemaforoEstado(row.estado, row.tiene_observaciones)).icon }}
                 </mat-icon>
               </div>
             </mat-cell>
@@ -128,7 +168,7 @@
           <ng-container matColumnDef="enviar">
             <mat-header-cell *matHeaderCellDef>
               <b>{{
-                permisos['enviar_coordinador']
+                esCoordinadorAsignacion
                   ? ("ptd.enviar_a_docente" | translate)
                   : permisos['enviar_docente']
                     ? ("ptd.enviar_a_coordinacion" | translate)
@@ -143,8 +183,8 @@
               ></action-button>
             </mat-cell>
           </ng-container>
-          <mat-header-row *matHeaderRowDef="displayedColumns"></mat-header-row>
-          <mat-row *matRowDef="let row; columns: displayedColumns"></mat-row>
+          <mat-header-row *matHeaderRowDef="displayedColumnsActual"></mat-header-row>
+          <mat-row *matRowDef="let row; columns: displayedColumnsActual"></mat-row>
         </mat-table>
         <mat-paginator
           [pageSizeOptions]="[5, 10, 25, 100]"
@@ -153,7 +193,7 @@
       </div>
 
       <!-- MENSAJE DE VACIO -->
-      <div *ngIf="dataSource.data.length === 0" class="margin-y alert info">
+      <div *ngIf="hasAttemptedToLoad && dataSource.data.length === 0" class="margin-y alert info">
         <mat-icon class="icon">sentiment_very_dissatisfied</mat-icon>
         {{ "ptd.sin_asignaciones_de_carga_academica_por_periodo" | translate }}
       </div>
@@ -173,6 +213,9 @@
           [dataDocente]="dataDocente"
           [detalleAsignacion]="detalleAsignacion"
           [periodosAnteriores]="periodosAnteriores"
+          [soloLectura]="esModoLecturaPorCalendario()"
+          [vigenciaActiva]="enRangoCalendario"
+          [selectedView]="rolVista"
         ></asignar-ptd-multiple>
       </ng-container>
       <!-- PDT con asignación modular -->
@@ -184,6 +227,8 @@
               [detalleAsignacion]="detallesGeneral"
               [periodosAnteriores]="periodosAnteriores"
               [soloLectura]="true"
+              [vigenciaActiva]="enRangoCalendario"
+              [selectedView]="rolVista"
             ></asignar-ptd-multiple>
           </mat-tab>
           <mat-tab label="{{ 'ptd.ptd_docente_principal' | translate }}">
@@ -192,6 +237,9 @@
               [detalleAsignacion]="detalleAsignacion"
               [periodosAnteriores]="periodosAnteriores"
               (OutDetalleChanged)="manageChangesInGeneralPTD($event)"
+              [soloLectura]="esModoLecturaPorCalendario()"
+              [vigenciaActiva]="enRangoCalendario"
+              [selectedView]="rolVista"
             ></asignar-ptd-multiple>
           </mat-tab>
           <ng-container
@@ -208,6 +256,8 @@
                 [periodosAnteriores]="periodosAnteriores"
                 (OutDetalleChanged)="manageChangesInGeneralPTD($event)"
                 [soloLectura]="true"
+                [vigenciaActiva]="enRangoCalendario"
+                [selectedView]="rolVista"
               ></asignar-ptd-multiple>
             </mat-tab>
           </ng-container>
@@ -219,6 +269,8 @@
                   [detalleAsignacion]="detallesGeneral"
                   [periodosAnteriores]="periodosAnteriores"
                   [soloLectura]="true"
+                  [vigenciaActiva]="enRangoCalendario"
+                  [selectedView]="rolVista"
                 ></asignar-ptd-multiple>
               </mat-tab>
               <mat-tab label="{{ 'ptd.seccion_tiempo' | translate }}">
@@ -227,6 +279,8 @@
                   [detalleAsignacion]="detallesGeneral"
                   [periodosAnteriores]="periodosAnteriores"
                   [soloLectura]="true"
+                  [vigenciaActiva]="enRangoCalendario"
+                  [selectedView]="rolVista"
                 ></asignar-ptd-multiple>
               </mat-tab>
             </mat-tab-group>

@@ -27,8 +27,11 @@ export class AsignarPtdMultipleComponent implements OnInit {
   rolesDocente: string[] = [ROLES.DOCENTE];
   coordinador: boolean = false;
   rolIs: string = '';
+  rolesIs: string[] = [];
   canEdit: Symbol = ACTIONS.VIEW;
   showCopyPTD: boolean = false;
+  @Input()
+  selectedView: string = ROLES.DOCENTE;
 
   asignaturaAdd: any = undefined;
 
@@ -48,6 +51,7 @@ export class AsignarPtdMultipleComponent implements OnInit {
   @Input() detalleAsignacion: any = undefined;
   @Input() periodosAnteriores: any[] = [];
   @Input() soloLectura: boolean = false;
+  @Input() vigenciaActiva: boolean = true;
   @Output() OutDetalleChanged: EventEmitter<any> = new EventEmitter();
 
   constructor(
@@ -65,13 +69,11 @@ export class AsignarPtdMultipleComponent implements OnInit {
 
   ngOnInit() {
     this.userService.getUserRoles().then(roles => {
-      let r = _head(_intersection(roles, this.rolesDocente.concat(this.rolesCoord)));
-      const intersection = _intersection(roles, this.rolesCoord);
+      const intersection = _intersection(roles, this.rolesDocente.concat(this.rolesCoord));
       if (intersection.length > 0) {
         this.coordinador = true;
-      }
-      if (r) {
-        this.rolIs = r;
+        this.rolesIs = intersection;
+        this.rolIs = this.selectedView;
         if(!this.soloLectura){
           this.canEdit = ACTIONS.EDIT;
         }

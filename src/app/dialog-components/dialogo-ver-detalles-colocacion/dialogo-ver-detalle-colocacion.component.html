@@ -28,19 +28,19 @@
         <div class="info-item">
           <p class="ml-3 mb-0">
             <strong>{{ "ptd.sede" | translate }}</strong
-            ><br />{{ infoEspacio.sede.Nombre? infoEspacio.sede.Nombre : infoEspacio.sede.sede }}
+            ><br />{{ infoEspacio?.sede?.Nombre || infoEspacio?.sede?.nombre || infoEspacio?.sede?.CodigoAbreviacion || infoEspacio?.sede?.sede || "N/A" }}
           </p>
         </div>
         <div class="info-item">
           <p class="ml-3 mb-0">
             <strong>{{ "ptd.edificio" | translate }}</strong
-            ><br />{{ infoEspacio.edificio.Nombre || infoEspacio.edificio.nombre }}
+            ><br />{{ infoEspacio?.edificio?.Nombre || infoEspacio?.edificio?.nombre || "N/A" }}
           </p>
         </div>
         <div class="info-item">
           <p class="ml-3 mb-0">
             <strong>{{ "ptd.salon" | translate }}</strong
-            ><br />{{ infoEspacio.salon.Nombre || infoEspacio.salon.nombre}}
+            ><br />{{ infoEspacio?.salon?.Nombre || infoEspacio?.salon?.nombre || "N/A" }}
           </p>
         </div>
         <div class="info-item" *ngIf="infoEspacio.horaFormato">

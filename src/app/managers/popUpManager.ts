@@ -108,7 +108,20 @@ export class PopUpManager {
         };
         return Swal.fire(opt);
     }
+    public showLoading(message?: string) {
 
+    Swal.fire({
+        title: message || this.translate.instant('GLOBAL.cargando'),
+        allowOutsideClick: false,
+        allowEscapeKey: false,
+        didOpen: () => {
+            Swal.showLoading();
+        }
+    });
+}
+public closeLoading() {
+    Swal.close();
+}
     /* public showManyPopUp(title, steps: any[], type) { // Not supported now :(
         const opts = steps.map(step => {
             return {

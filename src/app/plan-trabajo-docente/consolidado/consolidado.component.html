@@ -8,57 +8,97 @@
         </mat-card-title>
       </div>
     </mat-card-header>
+
+    <!-- Input de Documento Docente para ADMIN_SGA (General, Paso 1) -->
+    <div *ngIf="roles.includes('ADMIN_SGA')" style="padding: 0 16px 16px 16px;">
+      <div class="row">
+        <div class="col-12">
+          <mat-form-field class="form-field" style="width: 100%">
+            <mat-label>{{ "ptd.documento_docente" | translate }}</mat-label>
+            <input matInput [(ngModel)]="documentoDocenteConsulta" (change)="procesarDocumentoSuperusuario()" placeholder="Ej. 79702248" />
+          </mat-form-field>
+        </div>
+      </div>
+    </div>
+
     <mat-card-content>
       <mat-card class="card-fieldset">
         <div class="fieldset-legend">
           {{ "ptd.list_consolidados" | translate }}
         </div>
 
-        <div class="ancho-50">
-          <mat-form-field style="width: 20%">
-            <mat-label>{{ "GLOBAL.periodo" | translate }}:</mat-label>
-            <mat-select
-              [(ngModel)]="periodos.select"
-              (selectionChange)="listarConsolidados()"
-            >
-              <mat-option
-                >--{{ "GLOBAL.seleccionar" | translate }}--</mat-option
-              >
-              <mat-option *ngFor="let item of periodos.opciones" [value]="item">
-                {{ item.Nombre }}
-              </mat-option>
-            </mat-select>
-          </mat-form-field>
-          &nbsp;
-          <mat-form-field style="width: 50%">
+        <div class="row">
+          <div class="col-6">
+            <mat-form-field style="width: 100%">
             <mat-label
               >{{ "GLOBAL.proyecto_academico" | translate }}:</mat-label
             >
             <mat-select
               [(ngModel)]="proyectos.select"
-              (selectionChange)="listarConsolidados()"
+              (selectionChange)="onProyectoChange()"
+              [disabled]="!proyectos.opciones || proyectos.opciones.length === 0"
             >
               <mat-option
                 >--{{ "GLOBAL.seleccionar" | translate }}--</mat-option
               >
               <mat-option
-                *ngFor="let item of proyectos?.opciones"
+                *ngFor="let item of proyectos.opciones"
                 [value]="item"
               >
                 {{ item.Codigo }} - {{ item.Nombre }}
               </mat-option>
             </mat-select>
+            </mat-form-field>
+          </div>
+          <div class="col-6">
+          <mat-form-field style="width: 100%">
+            <mat-label>{{ "GLOBAL.periodo" | translate }}:</mat-label>
+            <mat-select
+              [(ngModel)]="periodos.select"
+              (selectionChange)="onPeriodoChange()"
+              [disabled]="!proyectos.select"
+            >
+              <mat-option
+                >--{{ "GLOBAL.seleccionar" | translate }}--</mat-option
+              >
+              <mat-option *ngFor="let item of periodos.opciones" [value]="item">
+                <div style="display: flex; flex-wrap: wrap; align-items: center">
+                  <div
+                    class="badge"
+                    [ngStyle]="{
+                      backgroundColor: item.Activo
+                        ? 'var(--success-accent)'
+                        : 'var(--danger-base)'
+                    }"
+                  ></div>
+                  <b>{{ item.Nombre }}</b>
+                  <small style="margin-left: 5px; font-size: 0.8em; color: gray">
+                    (Vigencia: {{ item.InicioVigencia | date : "yyyy-MM-dd" }} a {{ item.FinVigencia | date : "yyyy-MM-dd" }})
+                  </small>
+                </div>
+              </mat-option>
+            </mat-select>
           </mat-form-field>
-          &nbsp;<button
-            mat-stroked-button
-            *ngIf="this.periodos.select && this.proyectos.select"
-            (click)="listarConsolidados()"
-          >
-            {{ "GLOBAL.actualizar" | translate }}
-          </button>
+          </div>
+        </div>
+        <div class="row mb-3 mt-3">
+          <div class="col-12">
+            <button
+              mat-stroked-button
+              [disabled]="!periodos.select || !proyectos.select"
+              (click)="listarConsolidados()"
+            >
+              {{ "GLOBAL.actualizar" | translate }}
+            </button>
+          </div>
         </div>
 
-        <div>
+        <div class="alert info" *ngIf="esModoLecturaPorCalendario()">
+          <mat-icon class="icon">lock</mat-icon>
+          Modo lectura debido a restricciones de calendario
+        </div>
+
+        <div *ngIf="dataSource.data.length > 0">
           <mat-form-field>
             <mat-label>{{ "GLOBAL.filtrar" | translate }}</mat-label>
             <input matInput (keyup)="applyFilter($event)" #input />
@@ -137,14 +177,19 @@
               </mat-cell>
             </ng-container>
             <mat-header-row
-              *matHeaderRowDef="displayedColumns"
+              *matHeaderRowDef="displayedColumnsActual"
             ></mat-header-row>
-            <mat-row *matRowDef="let row; columns: displayedColumns"></mat-row>
+            <mat-row *matRowDef="let row; columns: displayedColumnsActual"></mat-row>
           </mat-table>
           <mat-paginator
             [pageSizeOptions]="[5, 10, 25, 100]"
             aria-label="Select page of users"
           ></mat-paginator>
+        </div>
+
+        <div *ngIf="hasAttemptedToLoad && dataSource.data.length === 0" class="margin-y alert info">
+          <mat-icon class="icon">sentiment_very_dissatisfied</mat-icon>
+          {{ "ptd.sin_asignaciones_de_carga_academica_por_periodo" | translate }}
         </div>
       </mat-card>
     </mat-card-content>
@@ -183,54 +228,79 @@
           <div class="fieldset-legend">
             {{ "ptd.generador_consolidado" | translate }}
           </div>
-          <div class="ancho-100">
-            <mat-form-field style="width: 20%">
-              <mat-label>{{ "GLOBAL.periodo" | translate }}:</mat-label>
-              <mat-select
-                [(ngModel)]="periodos.select"
-                (selectionChange)="listarConsolidados()"
-              >
-                <mat-option
-                  >--{{ "GLOBAL.seleccionar" | translate }}--</mat-option
-                >
-                <mat-option
-                  *ngFor="let item of periodos.opciones"
-                  [value]="item"
-                >
-                  {{ item.Nombre }}
-                </mat-option>
-              </mat-select>
-            </mat-form-field>
-            &nbsp;
-            <mat-form-field style="width: 50%">
+          <div class="row">
+            <div class="col-6">
+              <mat-form-field style="width: 100%">
               <mat-label
                 >{{ "GLOBAL.proyecto_academico" | translate }}:</mat-label
               >
               <mat-select
                 [(ngModel)]="proyectos.select"
-                (selectionChange)="listarConsolidados()"
+                (selectionChange)="onProyectoChange()"
               >
                 <mat-option
                   >--{{ "GLOBAL.seleccionar" | translate }}--</mat-option
                 >
                 <mat-option
-                  *ngFor="let item of proyectos?.opciones"
+                  *ngFor="let item of proyectos.opciones"
                   [value]="item"
                 >
                   {{ item.Codigo }} - {{ item.Nombre }}
                 </mat-option>
               </mat-select>
+              </mat-form-field>
+            </div>
+            <div class="col-6">
+              <mat-form-field style="width: 100%">
+              <mat-label>{{ "GLOBAL.periodo" | translate }}:</mat-label>
+              <mat-select
+                [(ngModel)]="periodos.select"
+                (selectionChange)="onPeriodoChange()"
+                [disabled]="!proyectos.select"
+              >
+                <mat-option
+                  >--{{ "GLOBAL.seleccionar" | translate }}--</mat-option
+                >
+                <mat-option *ngFor="let item of periodos.opciones" [value]="item">
+                  <div style="display: flex; flex-wrap: wrap; align-items: center">
+                    <div
+                      class="badge"
+                      [ngStyle]="{
+                        backgroundColor: item.Activo
+                          ? 'var(--success-accent)'
+                          : 'var(--danger-base)'
+                      }"
+                    ></div>
+                    <b>{{ item.Nombre }}</b>
+                    <small style="margin-left: 5px; font-size: 0.8em; color: gray">
+                      (Vigencia: {{ item.InicioVigencia | date : "yyyy-MM-dd" }} a {{ item.FinVigencia | date : "yyyy-MM-dd" }})
+                    </small>
+                  </div>
+                </mat-option>
+              </mat-select>
             </mat-form-field>
-            &nbsp;<button
-              mat-stroked-button
-              *ngIf="this.periodos.select && this.proyectos.select"
-              (click)="obtenerDocConsolidado()"
-            >
-              {{ "ptd.generar_consolidado" | translate }}
-            </button>
-            &nbsp;
-            <div class="info-alert texto-centro">
-              {{ "ptd.generador_consolidado_info" | translate }}
+            </div>
+          </div>
+          <div class="row mb-3 mt-3">
+            <div class="col-12 center-v">
+              <button
+                mat-stroked-button
+                *ngIf="this.periodos.select && this.proyectos.select"
+                (click)="obtenerDocConsolidado()"
+              >
+                {{ "ptd.generar_consolidado" | translate }}
+              </button>
+              <button
+                mat-stroked-button
+                *ngIf="this.periodos.select && this.proyectos.select"
+                (click)="generarExcelActividades()"
+              >
+                Generar Excel Actividades
+              </button>
+              &nbsp;
+              <div class="info-alert mb-0">
+                {{ "ptd.generador_consolidado_info" | translate }}
+              </div>
             </div>
           </div>
         </mat-card>
@@ -366,8 +436,9 @@
                     'GLOBAL.placeholder_observacion' | translate
                   }}"
                   matTextareaAutosize
-                  matAutosizeMinRows="3"
-                  matAutosizeMaxRows="6"
+                  matAutosizeMinRows="5"
+                  matAutosizeMaxRows="10"
+                  style="min-height: 180px;"
                 ></textarea>
               </mat-form-field>
             </div>

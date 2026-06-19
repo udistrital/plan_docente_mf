@@ -4,16 +4,12 @@ import { MatSort } from "@angular/material/sort";
 import { MatTableDataSource } from "@angular/material/table";
 import { MODALS, ROLES, VIEWS } from "src/app/models/diccionario";
 import { UserService } from "src/app/services/user.service";
-import {
-  head as _head,
-  cloneDeep as _cloneDeep,
-} from "lodash-es";
+import { cloneDeep as _cloneDeep } from "lodash-es";
 import { Periodo } from "src/app/models/parametros/periodo";
 import { TranslateService } from "@ngx-translate/core";
 import { PopUpManager } from "src/app/managers/popUpManager";
 import { PlanTrabajoDocenteService } from "src/app/services/plan-trabajo-docente.service";
 import { ParametrosService } from "src/app/services/parametros.service";
-import { ProyectoAcademicoService } from "src/app/services/proyecto-academico.service";
 import { RespFormat } from "src/app/models/response-format";
 import { checkContent, checkResponse } from "src/app/utils/verify-response";
 import { EstadoConsolidado } from "src/app/models/plan-trabajo-docente/estado-consolidado";
@@ -43,6 +39,8 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
   /* readonly MODALS = MODALS;
   readonly ACTIONS = ACTIONS; */
   vista: Symbol;
+
+  roles: string[] = [];
 
   opcionesPermisos: string[] = [
     'ver_gestion_consolidado',
@@ -86,6 +84,14 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
   archivoExistenteUrl: string | null = null;
   archivoExistenteNombre: string | null = null;
   documentoIdActual: number | null = null;
+  codigoEventoPTD: string = '';
+  calendarEventosPTD: any[] = [];
+  calendarEventoSeleccionado: any = null;
+  enRangoCalendario: boolean = false;
+  _todosLosPeriodos: Periodo[] = [];
+  hasAttemptedToLoad = false;
+  documentoDocenteConsulta: string = '';
+  terceroIdConsulta: number | null = null;
 
   constructor(
     private userService: UserService,
@@ -93,7 +99,6 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
     private popUpManager: PopUpManager,
     private planTrabajoDocenteService: PlanTrabajoDocenteService,
     private parametrosService: ParametrosService,
-    private proyectoAcademicoService: ProyectoAcademicoService,
     private tercerosService: TercerosService,
     private sgaPlanTrabajoDocenteMidService: SgaPlanTrabajoDocenteMidService,
     private gestorDocumentalService: GestorDocumentalService,
@@ -114,24 +119,226 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
     this.respuestaConsolidado = false;
   }
 
-  ngOnInit() {
-    this.userService.getUserRoles().then(async (roles) => {
-      const observables: { [key: string]: Observable<boolean> } = {};
-      this.opcionesPermisos.forEach(opcion => {
-        observables[opcion] =
-          this.permisosUtils.tienePermiso(roles, opcion);
-      });
-      const resultados = await firstValueFrom(forkJoin(observables));
-      this.permisos = resultados;
+  async ngOnInit(): Promise<void> {
+    this.popUpManager.showLoading();
+    
+    try {
+      // 1. Carga de roles corporativos
+      const roles = await this.userService.getUserRoles();
+      this.roles = roles;
+
+      // Espera real del evento y cálculo de fechas del calendario
+      if (!this.roles.includes('ADMIN_SGA')) {
+        await this.cargarEventoPTD();
+      }
+
+      if (this.roles.includes('ADMIN_SGA')) {
+        this.permisos = {
+          ver_gestion_consolidado: true,
+          editar_gestion_consolidado: false,
+          nuevo_consolidado: false,
+          enviar_coordinador_consolidado: false,
+          ver_consolidados_coordinacion: true
+        };
+      } else {
+        // 2. Mapeo optimizado de permisos
+        const observables: Record<string, Observable<boolean>> = this.opcionesPermisos.reduce((acc, opcion) => {
+          acc[opcion] = this.permisosUtils.tienePermiso(roles, opcion);
+          return acc;
+        }, {} as Record<string, Observable<boolean>>);
+
+        // 3. Resolución de la matriz de permisos
+        this.permisos = await firstValueFrom(forkJoin(observables));
+      }
       console.log("Permisos cargados:", this.permisos);
-    });
-    this.loadSelects();
-    this.buildForms();
+
+      // Espera real a que los catálogos/selects estén mapeados en memoria
+      await this.loadSelects();
+
+      // 4. Construcción del formulario con la certeza de tener toda la data previa cargada
+      this.buildForms();
+
+    } catch (err) {
+      console.error("Error crítico durante el ngOnInit del componente PTD:", err);
+      this.popUpManager.showErrorAlert(
+        this.translate.instant("ERROR.persiste_error_comunique_OAS")
+      );
+    } finally {
+      // El loading solo se cerrará cuando TODO el proceso asíncrono termine con éxito o falle.
+      this.popUpManager.closeLoading();
+    }
   }
 
   ngAfterViewInit() {
     this.dataSource.paginator = this.paginator;
     this.dataSource.sort = this.sort;
+  }
+
+  private configurarDataSource(data: any[] = []) {
+    const dataSource = new MatTableDataSource(data);
+    dataSource.paginator = this.paginator;
+    dataSource.sort = this.sort;
+    return dataSource;
+  }
+
+  async cargarEventoPTD(): Promise<void> {
+    try {
+      const resp: any = await firstValueFrom(
+        this.sgaPlanTrabajoDocenteMidService.get("calendario/eventos")
+      );
+
+      if (checkContent(resp)) {
+        const eventos = Array.isArray(resp.Data) ? resp.Data : [];
+        const evento = eventos.find((e: any) => e.Descripcion === "PLANES DE TRABAJO DOCENTES");
+        
+        if (evento) {
+          this.codigoEventoPTD = evento.CodigoEvento;
+          
+          // Esperamos limpiamente la resolución de la promesa interna
+          const eventosCalendario = await this.cargarCalendarioEventos();
+          this.calendarEventosPTD = eventosCalendario;
+          
+          this.resolverProyectosDesdeCalendario();
+          this.verificarRangoFechas();
+          this.intentarListarConsolidados();
+        }
+      }
+    } catch (err) {
+      console.warn("Error obteniendo calendario/eventos:", err);
+      // Propagamos el error para que el try-catch de ngOnInit lo capture y muestre la alerta
+      throw err; 
+    }
+  }
+
+  cargarCalendarioEventos(): Promise<any[]> {
+    return new Promise((resolve, reject) => {
+      const documento = this.obtenerDocumentoCoordinador();
+      if (!documento || !this.codigoEventoPTD) {
+        reject(new Error('No se pudo obtener documento o código de evento'));
+        return;
+      }
+      this.sgaPlanTrabajoDocenteMidService.get(
+        `calendario/calendario_eventos?documento=${documento}&codigo_evento=${this.codigoEventoPTD}`
+      ).subscribe({
+        next: (calResp: any) => {
+          const data = calResp?.Data ?? calResp ?? [];
+          const dataArr = Array.isArray(data) ? data : [data];
+          const adjustedData = dataArr.map((evento: any) => {
+            if (evento) {
+              const adjusted = { ...evento };
+              if (evento.FechaInicio) {
+                const dateInit = new Date(evento.FechaInicio);
+                if (!isNaN(dateInit.getTime())) {
+                  dateInit.setHours(dateInit.getHours() + 5);
+                  adjusted.FechaInicio = dateInit.toISOString();
+                }
+              }
+              if (evento.FechaFin) {
+                const dateFin = new Date(evento.FechaFin);
+                if (!isNaN(dateFin.getTime())) {
+                  dateFin.setHours(dateFin.getHours() + 5);
+                  adjusted.FechaFin = dateFin.toISOString();
+                }
+              }
+              return adjusted;
+            }
+            return evento;
+          });
+          resolve(adjustedData);
+        },
+        error: (err: any) => {
+          console.warn("Error obteniendo calendario/calendario_eventos:", err);
+          reject(err);
+        }
+      });
+    });
+  }
+
+  resolverProyectosDesdeCalendario() {
+    if (!this.calendarEventosPTD || this.calendarEventosPTD.length === 0) return;
+    const proyectosMap = new Map<string, any>();
+    this.calendarEventosPTD.forEach((evento: any) => {
+      const id = String(evento.CodigoProyecto);
+      if (id && evento.NombreProyecto && !proyectosMap.has(id)) {
+        proyectosMap.set(id, { Id: id, Codigo: id, Nombre: evento.NombreProyecto });
+      }
+    });
+    this.proyectos.opciones = Array.from(proyectosMap.values());
+  }
+
+  private intentarListarConsolidados() {
+    if (this.periodos.select && this.proyectos.select) {
+      this.listarConsolidados();
+    }
+  }
+
+  esModoLecturaPorCalendario(): boolean {
+    if (this.roles.includes('ADMIN_SGA')) {
+      return true;
+    }
+    return !!this.periodos.select?.Id && !this.enRangoCalendario;
+  }
+
+  get displayedColumnsActual(): string[] {
+    return this.esModoLecturaPorCalendario()
+      ? this.displayedColumns.filter((column) => column !== "enviar")
+      : this.displayedColumns;
+  }
+
+  filtrarPeriodosPorCalendario() {
+    if (!this.calendarEventosPTD || this.calendarEventosPTD.length === 0) {
+      this.periodos.opciones = [];
+      return;
+    }
+    const eventosDelProyecto = this.calendarEventosPTD.filter((e: any) =>
+      String(e.CodigoProyecto) === String(this.proyectos.select?.Id)
+    );
+    const todosLosPeriodos = this._todosLosPeriodos || this.periodos.opciones;
+    const vistos = new Set<string>();
+    this.periodos.opciones = todosLosPeriodos.filter((periodo: Periodo) => {
+      const evento = eventosDelProyecto.find((e: any) =>
+        String(e.Year) === String(periodo.Year) &&
+        String(e.Ciclo) === String(periodo.Ciclo)
+      );
+      if (evento) {
+        if (vistos.has(periodo.Nombre)) return false;
+        vistos.add(periodo.Nombre);
+
+        periodo.InicioVigencia = evento.FechaInicio;
+        periodo.FinVigencia = evento.FechaFin;
+        const ahora = new Date();
+        const fechaInicio = new Date(evento.FechaInicio);
+        const fechaFin = new Date(evento.FechaFin);
+        periodo.Activo = ahora >= fechaInicio && ahora <= fechaFin;
+        return true;
+      }
+      return false;
+    });
+  }
+
+  verificarRangoFechas() {
+    this.enRangoCalendario = false;
+    this.calendarEventoSeleccionado = null;
+    if (!this.periodos.select || !this.proyectos.select || !this.calendarEventosPTD || this.calendarEventosPTD.length === 0) {
+      return;
+    }
+    const eventoMatch = this.calendarEventosPTD.find((evento: any) =>
+      String(evento.CodigoProyecto) === String(this.proyectos.select.Id) &&
+      String(evento.Year) === String(this.periodos.select.Year) &&
+      String(evento.Ciclo) === String(this.periodos.select.Ciclo)
+    );
+    if (eventoMatch) {
+      this.calendarEventoSeleccionado = eventoMatch;
+      const ahora = new Date();
+      const fechaInicio = new Date(eventoMatch.FechaInicio);
+      const fechaFin = new Date(eventoMatch.FechaFin);
+      this.enRangoCalendario = ahora >= fechaInicio && ahora <= fechaFin;
+      console.log('--- Consolidado: Verificar Rango Fechas ---');
+      console.log('Fecha actual:', ahora);
+      console.log('Fecha Inicio Evento:', fechaInicio);
+      console.log('Fecha Fin Evento:', fechaFin);
+      console.log('¿Está en rango?:', this.enRangoCalendario);
+    }
   }
 
   applyFilter(event: Event) {
@@ -209,35 +416,70 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
     this.nuevoEditarConsolidado(event.rowData.ConsolidadoJson);
   }
 
-  accionEnviar(event: any) {
+  async accionEnviar(event: any) {
     if (!this.permisos['enviar_coordinador_consolidado']) {
       this.popUpManager.showErrorAlert(
         this.translate.instant('GLOBAL.acceso_denegado')
       );
       return;
     }
+    const consolidado = event.rowData.ConsolidadoJson;
 
-    let putPlan = _cloneDeep(event.rowData.ConsolidadoJson);
-    const estado = this.estadosConsolidado.opciones.find(
+    // Obtener el id del estado 'ENV'
+    const estadoEnv = this.estadosConsolidado.opciones.find(
       (estado) => estado.codigo_abreviacion === "ENV"
     );
-    putPlan.estado_consolidado_id = estado._id;
-    this.planTrabajoDocenteService
-      .put("consolidado_docente/" + putPlan._id, putPlan)
-      .subscribe(
-        (resp) => {
-          this.popUpManager.showSuccessAlert(
-            this.translate.instant("ptd.actualizar_consolidado_ok")
-          );
-          this.listarConsolidados();
-        },
-        (err) => {
-          console.warn(err);
-          this.popUpManager.showErrorAlert(
-            this.translate.instant("ptd.fallo_actualizar_consolidado")
-          );
-        }
+    if (!estadoEnv) {
+      this.popUpManager.showErrorAlert(
+        this.translate.instant("ptd.fallo_actualizar_consolidado")
       );
+      return;
+    }
+
+    // Verificar que no exista otro consolidado en estado 'ENV' para mismo periodo y proyecto
+    try {
+      const periodoId = consolidado.periodo_id || this.periodos.select?.Id;
+      const proyectoId = consolidado.proyecto_academico_id || this.proyectos.select?.Id || 0;
+      const query = `consolidado_docente?query=activo:true,periodo_id:${periodoId},proyecto_academico_id:${proyectoId},estado_consolidado_id:${estadoEnv._id}&limit=0`;
+      const resp: any = await firstValueFrom(this.planTrabajoDocenteService.get(query));
+      const existentes: any[] = resp?.Data ?? [];
+      const otrosEnviados = existentes.filter((c: any) => String(c._id) !== String(consolidado._id));
+      if (otrosEnviados.length > 0) {
+        this.popUpManager.showPopUpGeneric(
+          "",
+          "Ya existe otro consolidado en estado 'Enviado' para este periodo y proyecto. No es posible realizar el envío.",
+          MODALS.INFO,
+          false
+        );
+        return;
+      }
+    } catch (err) {
+      console.warn('Error verificando consolidado enviado existente:', err);
+      this.popUpManager.showErrorAlert(
+        this.translate.instant("ptd.fallo_actualizar_consolidado")
+      );
+      return;
+    }
+
+    try {
+      // Si pasa la verificación, proceder a cambiar el estado a ENV
+      const putPlan = _cloneDeep(consolidado);
+      putPlan.estado_consolidado_id = estadoEnv._id;
+      await firstValueFrom(
+        this.planTrabajoDocenteService.put("consolidado_docente/" + putPlan._id, putPlan)
+      );
+      this.popUpManager.closeLoading();
+      this.popUpManager.showSuccessAlert(
+        this.translate.instant("ptd.actualizar_consolidado_ok")
+      );
+      await this.listarConsolidados();
+    } catch (err) {
+      this.popUpManager.closeLoading();
+      console.warn(err);
+      this.popUpManager.showErrorAlert(
+        this.translate.instant("ptd.fallo_actualizar_consolidado")
+      );
+    }
   }
 
   loadPeriodo(): Promise<Periodo[]> {
@@ -259,26 +501,27 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
     });
   }
 
-  loadProyectos(): Promise<any[]> {
-    return new Promise((resolve, reject) => {
-      this.proyectoAcademicoService
-        .get(
-          "proyecto_academico_institucion?query=Activo:true&sortby=Nombre&order=asc&limit=0"
-        )
-        .subscribe({
-          next: (resp: any) => {
-            if (checkContent(resp)) {
-              resolve(resp as any[]);
-            } else {
-              reject(new Error("No se encontraron proyectos"));
-            }
-          },
-          error: (err) => {
-            reject(err);
-          },
-        });
-    });
+
+  private obtenerDocumentoCoordinador(): string | null {
+    if (this.roles.includes('ADMIN_SGA')) {
+      return this.documentoDocenteConsulta || null;
+    }
+    try {
+      const userEncoded = window.localStorage.getItem("user");
+      if (!userEncoded) return null;
+      const decoded = JSON.parse(atob(userEncoded));
+      const posiblesDocumentos: any[] = [
+        decoded?.user?.documento, decoded?.userService?.documento,
+        decoded?.user?.documento_compuesto, decoded?.userService?.documento_compuesto
+      ];
+      for (const valor of posiblesDocumentos) {
+        const documento = String(valor ?? "").trim();
+        if (documento) return documento;
+      }
+    } catch { return null; }
+    return null;
   }
+
 
   cargarEstadosConsolidado(): Promise<EstadoConsolidado[]> {
     return new Promise((resolve, reject) => {
@@ -299,127 +542,190 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
     });
   }
 
-  async loadSelects() {
+  async loadSelects(): Promise<void> {
     try {
-      let promesas = [];
-      promesas.push(
-        this.loadPeriodo().then((periodos) => {
-          this.periodos.opciones = periodos;
-        })
-      );
-      promesas.push(
-        this.loadProyectos().then((proyectos) => {
-          this.proyectos.opciones = proyectos;
-        })
-      );
-      promesas.push(
-        this.cargarEstadosConsolidado().then((estadosConsolidado) => {
-          this.estadosConsolidado.opciones = estadosConsolidado;
-        })
-      );
+      // Ejecución limpia en paralelo de las promesas nativas del servicio
+      const [periodos, estadosConsolidado] = await Promise.all([
+        this.loadPeriodo(),
+        this.cargarEstadosConsolidado()
+      ]);
+
+      this.periodos.opciones = periodos;
+      this._todosLosPeriodos = [...periodos];
+      this.estadosConsolidado.opciones = estadosConsolidado;
+
     } catch (error) {
-      console.warn(error);
+      console.warn("Error cargando catálogos de selección:", error);
       this.popUpManager.showPopUpGeneric(
         this.translate.instant("ERROR.titulo_generico"),
-        this.translate.instant("ERROR.sin_informacion_en") +
-        ": <b>" +
-        error +
-        "</b>.<br><br>" +
-        this.translate.instant("ERROR.persiste_error_comunique_OAS"),
+        `${this.translate.instant("ERROR.sin_informacion_en")}: <b>${error}</b>.<br><br>${this.translate.instant("ERROR.persiste_error_comunique_OAS")}`,
         MODALS.ERROR,
         false
       );
+      // Propagamos para asegurar el flujo controlado en ngOnInit si se requiere
+      throw error;
     }
   }
 
-  listarConsolidados() {
-    if(!this.permisos['ver_consolidados_coordinacion']){
+  onProyectoChange() {
+    this.periodos.select = undefined;
+    this.periodos.opciones = [];
+    this.dataSource = this.configurarDataSource();
+    this.hasAttemptedToLoad = false;
+    if (this.proyectos.select) {
+      this.filtrarPeriodosPorCalendario();
+    }
+  }
+
+  async procesarDocumentoSuperusuario() {
+    if (!this.documentoDocenteConsulta) {
+      this.proyectos.opciones = [];
+      this.periodos.opciones = [];
+      this.proyectos.select = null;
+      this.periodos.select = null;
+      this.dataSource.data = [];
+      this.terceroIdConsulta = null;
+      return;
+    }
+
+    this.popUpManager.showLoading();
+    try {
+      // 1. Resolve TerceroId
+      const queryUrl = `datos_identificacion?query=Activo:true,Numero:${this.documentoDocenteConsulta}&sortby=FechaCreacion&order=desc`;
+      const respTercero = await firstValueFrom(this.tercerosService.get(queryUrl));
+      const dataTercero = respTercero?.Data ?? respTercero ?? [];
+      if (!Array.isArray(dataTercero) || dataTercero.length === 0 || !dataTercero[0]?.TerceroId?.Id) {
+        this.popUpManager.showErrorToast(this.translate.instant("ptd.error_no_found_docente"));
+        this.proyectos.opciones = [];
+        this.periodos.opciones = [];
+        this.proyectos.select = null;
+        this.periodos.select = null;
+        this.dataSource.data = [];
+        this.terceroIdConsulta = null;
+        return;
+      }
+      this.terceroIdConsulta = dataTercero[0].TerceroId.Id;
+
+      // 2. Load calendar events and projects for this teacher's document
+      await this.cargarEventoPTD();
+      
+      this.proyectos.select = null;
+      this.periodos.select = null;
+      this.periodos.opciones = [];
+      this.dataSource.data = [];
+      this.hasAttemptedToLoad = false;
+    } catch (err) {
+      console.error(err);
+      this.popUpManager.showErrorToast(this.translate.instant("ERROR.persiste_error_comunique_OAS"));
+    } finally {
+      this.popUpManager.closeLoading();
+    }
+  }
+
+  onPeriodoChange() {
+    this.dataSource = this.configurarDataSource();
+    this.hasAttemptedToLoad = false;
+    if (this.periodos.select) {
+      this.verificarRangoFechas();
+      this.intentarListarConsolidados();
+    }
+  }
+
+  async listarConsolidados() {
+    if (!this.permisos['ver_consolidados_coordinacion']){
       this.popUpManager.showErrorAlert(
         this.translate.instant('GLOBAL.acceso_denegado')
       );
       return;
     }
+    this.verificarRangoFechas();
     if (this.periodos.select) {
       let proyecto = "";
-      if (this.proyectos.select) {
+      if (this.proyectos.select && !this.roles.includes(ROLES.DOCENTE)) {
         proyecto = ",proyecto_academico_id:" + this.proyectos.select.Id;
       }
-      this.planTrabajoDocenteService
-        .get(
-          `consolidado_docente?query=activo:true,periodo_id:${this.periodos.select.Id}${proyecto}&limit=0`
-        )
-        .subscribe(
-          (resp) => {
-            let rawlistarConsolidados = <any[]>resp.Data;
-            const idEstadosFiltro = this.estadosConsolidado.opciones
-              .filter((estado) =>
-                ["DEF", "ENV", "APR", "N_APR"].includes(
-                  estado.codigo_abreviacion
-                )
-              )
-              .map((estado) => estado._id);
-            rawlistarConsolidados = rawlistarConsolidados.filter(
-              (consolidado) =>
-                idEstadosFiltro.includes(consolidado.estado_consolidado_id)
-            );
-            let formatedData: any[] = [];
-            rawlistarConsolidados.forEach((consolidado) => {
-              const estadoConsolidado = this.estadosConsolidado.opciones.find(
-                (estado) => estado._id == consolidado.estado_consolidado_id
-              );
-              const proyecto = this.proyectos.opciones.find(
-                (proyecto) => proyecto.Id == consolidado.proyecto_academico_id
-              );
-              const periodo = this.periodos.opciones.find(
-                (periodo) => periodo.Id == consolidado.periodo_id
-              );
-              const canViewGestion =
-                this.permisos['ver_gestion_consolidado'] ||
-                this.permisos['editar_gestion_consolidado'];
-              let opcionGestion = "ver";
-              if (
-                estadoConsolidado &&
-                (estadoConsolidado.codigo_abreviacion == "DEF" ||
-                  estadoConsolidado.codigo_abreviacion == "N_APR") &&
-                this.permisos['editar_gestion_consolidado']
-              ) {
-                opcionGestion = "editar";
-              }
-              formatedData.push({
-                proyecto_curricular: proyecto ? proyecto.Nombre : "",
-                codigo: proyecto ? proyecto.Codigo : "",
-                fecha_radicado: this.formatoFecha(consolidado.fecha_creacion),
-                periodo_academico: periodo ? periodo.Nombre : "",
-                revision_decanatura: {
-                  value: undefined,
-                  type: "ver",
-                  disabled: false,
-                },
-                gestion: {
-                  value: undefined,
-                  type: opcionGestion,
-                  disabled: !canViewGestion,
-                },
-                estado: estadoConsolidado
-                  ? estadoConsolidado.nombre
-                  : consolidado.estado_consolidado_id,
-                enviar: {
-                  value: undefined,
-                  type: "enviar",
-                  disabled:
-                    !this.permisos['enviar_coordinador_consolidado'] ||
-                    estadoConsolidado.codigo_abreviacion != "DEF",
-                },
-                ConsolidadoJson: consolidado,
-              });
-            });
-            this.dataSource = new MatTableDataSource(formatedData);
-          },
-          (err) => {
-            console.warn(err);
-            this.dataSource = new MatTableDataSource();
-          }
+      try {
+        const resp: any = await firstValueFrom(
+          this.planTrabajoDocenteService.get(
+            `consolidado_docente?query=activo:true,periodo_id:${this.periodos.select.Id}${proyecto}&limit=0`
+          )
         );
+        let rawlistarConsolidados = <any[]>resp.Data;
+        const idEstadosFiltro = this.estadosConsolidado.opciones
+          .filter((estado) =>
+            ["DEF", "ENV", "APR", "N_APR"].includes(
+              estado.codigo_abreviacion
+            )
+          )
+          .map((estado) => estado._id);
+        rawlistarConsolidados = rawlistarConsolidados.filter(
+          (consolidado) =>
+            idEstadosFiltro.includes(consolidado.estado_consolidado_id)
+        );
+        let formatedData: any[] = [];
+        rawlistarConsolidados.forEach((consolidado) => {
+          const estadoConsolidado = this.estadosConsolidado.opciones.find(
+            (estado) => estado._id == consolidado.estado_consolidado_id
+          );
+          const codigoEstado = String(estadoConsolidado?.codigo_abreviacion || "");
+          const revisionDecanaturaHabilitada = codigoEstado === "APR" || codigoEstado === "N_APR";
+          const proyecto = this.proyectos.opciones.find(
+            (proyecto) => proyecto.Id == consolidado.proyecto_academico_id
+          );
+          const periodo = this.periodos.opciones.find(
+            (periodo) => periodo.Id == consolidado.periodo_id
+          );
+          const canViewGestion =
+            this.permisos['ver_gestion_consolidado'] ||
+            this.permisos['editar_gestion_consolidado'];
+          let opcionGestion = "ver";
+          if (
+            !this.esModoLecturaPorCalendario() &&
+            estadoConsolidado &&
+            (estadoConsolidado.codigo_abreviacion == "DEF" ||
+              estadoConsolidado.codigo_abreviacion == "N_APR") &&
+            this.permisos['editar_gestion_consolidado']
+          ) {
+            opcionGestion = "editar";
+          }
+          formatedData.push({
+            proyecto_curricular: proyecto ? proyecto.Nombre : "",
+            codigo: proyecto ? proyecto.Codigo : "",
+            fecha_radicado: this.formatoFecha(consolidado.fecha_creacion),
+            periodo_academico: periodo ? periodo.Nombre : "",
+            revision_decanatura: {
+              value: undefined,
+              type: "ver",
+              disabled: !revisionDecanaturaHabilitada,
+            },
+            gestion: {
+              value: undefined,
+              type: opcionGestion,
+              disabled: !canViewGestion,
+            },
+            estado: estadoConsolidado
+              ? estadoConsolidado.nombre
+              : consolidado.estado_consolidado_id,
+            enviar: {
+              value: undefined,
+              type: "enviar",
+              disabled:
+                this.esModoLecturaPorCalendario() ||
+                !this.permisos['enviar_coordinador_consolidado'] ||
+                !estadoConsolidado ||
+                estadoConsolidado.codigo_abreviacion != "DEF",
+            },
+            ConsolidadoJson: consolidado,
+          });
+        });
+        this.dataSource = this.configurarDataSource(formatedData);
+      } catch (err) {
+        console.warn(err);
+        this.dataSource = this.configurarDataSource();
+        throw err;
+      } finally {
+        this.hasAttemptedToLoad = true;
+      }
     }
   }
 
@@ -495,12 +801,18 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
             this.getInfoResponsable(terceroId);
           })
           .catch(() => {
-            this.popUpManager.showPopUpGeneric(
-              this.translate.instant("ERROR.titulo_generico"),
-              this.translate.instant("ERROR.persiste_error_comunique_OAS"),
-              MODALS.ERROR,
-              false
-            );
+            if (this.roles.includes('ADMIN_SGA')) {
+              this.formNewEditConsolidado.patchValue({
+                QuienEnvia: 'ADMIN_SGA',
+              });
+            } else {
+              this.popUpManager.showPopUpGeneric(
+                this.translate.instant("ERROR.titulo_generico"),
+                this.translate.instant("ERROR.persiste_error_comunique_OAS"),
+                MODALS.ERROR,
+                false
+              );
+            }
           });
       }
     } else {
@@ -515,12 +827,18 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
           this.getInfoResponsable(terceroId);
         })
         .catch(() => {
-          this.popUpManager.showPopUpGeneric(
-            this.translate.instant("ERROR.titulo_generico"),
-            this.translate.instant("ERROR.persiste_error_comunique_OAS"),
-            MODALS.ERROR,
-            false
-          );
+          if (this.roles.includes('ADMIN_SGA')) {
+            this.formNewEditConsolidado.patchValue({
+              QuienEnvia: 'ADMIN_SGA',
+            });
+          } else {
+            this.popUpManager.showPopUpGeneric(
+              this.translate.instant("ERROR.titulo_generico"),
+              this.translate.instant("ERROR.persiste_error_comunique_OAS"),
+              MODALS.ERROR,
+              false
+            );
+          }
         });
     }
   }
@@ -637,7 +955,12 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
 
   async validarFormNewEdit() {
     const archivo = this.formNewEditConsolidado.get("ArchivoSoporte")?.value;
-    const responsableId = await this.userService.getPersonaId();
+    let responsableId = 0;
+    try {
+      responsableId = await this.userService.getPersonaId();
+    } catch {
+      responsableId = 0;
+    }
     if (!this.periodos.select || !this.proyectos.select) {
       this.popUpManager.showPopUpGeneric(
         this.translate.instant("ptd.diligenciar_consolidado"),
@@ -768,6 +1091,24 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
     }
   }
 
+  private descargarArchivoBase64(base64Content: string, nombreArchivo: string, mimeType: string) {
+    const rawFile = new Uint8Array(
+      atob(base64Content)
+        .split("")
+        .map((char) => char.charCodeAt(0))
+    );
+    const urlFile = window.URL.createObjectURL(
+      new Blob([rawFile], { type: mimeType })
+    );
+    const download = document.createElement("a");
+    download.href = urlFile;
+    download.download = nombreArchivo;
+    document.body.appendChild(download);
+    download.click();
+    document.body.removeChild(download);
+    window.URL.revokeObjectURL(urlFile);
+  }
+
   obtenerDocConsolidado() {
     if (this.periodos.select) {
       this.sgaPlanTrabajoDocenteMidService
@@ -778,15 +1119,25 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
         .subscribe(
           (resp) => {
             this.listaPlanesConsolidado = resp.Data.listaIdPlanes;
-            const rawFilePDF = new Uint8Array(
-              atob(resp.Data.pdf)
-                .split("")
-                .map((char) => char.charCodeAt(0))
-            );
-            const urlFilePDF = window.URL.createObjectURL(
-              new Blob([rawFilePDF], { type: "application/pdf" })
-            );
-            this.previewFile(urlFilePDF);
+            const pdfBase64 = resp?.Data?.pdf || "";
+            if (pdfBase64.trim().length > 0) {
+              const rawFilePDF = new Uint8Array(
+                atob(pdfBase64)
+                  .split("")
+                  .map((char) => char.charCodeAt(0))
+              );
+              const urlFilePDF = window.URL.createObjectURL(
+                new Blob([rawFilePDF], { type: "application/pdf" })
+              );
+              this.previewFile(urlFilePDF);
+            } else {
+              this.popUpManager.showPopUpGeneric(
+                "",
+                this.translate.instant("ptd.pdf_solover_excel_imprimir"),
+                MODALS.INFO,
+                false
+              );
+            }
             const rawFileExcel = new Uint8Array(
               atob(resp.Data.excel)
                 .split("")
@@ -814,6 +1165,45 @@ export class ConsolidadoComponent implements OnInit, AfterViewInit {
         );
     }
   }
+
+  generarExcelActividades() {
+    if (!this.periodos.select) {
+      return;
+    }
+
+    const vigencia = this.periodos.select.Id;
+    const proyecto = this.proyectos.select ? this.proyectos.select.Id : 0;
+
+    this.sgaPlanTrabajoDocenteMidService
+      .get(`reporte/consolidado-actividades-docente?vigencia=${vigencia}&proyecto=${proyecto}`)
+      .subscribe(
+        (resp) => {
+          const excelBase64 = resp?.Data?.excel;
+          if (!excelBase64) {
+            this.popUpManager.showErrorAlert(
+              this.translate.instant("ERROR.persiste_error_comunique_OAS")
+            );
+            return;
+          }
+
+          this.descargarArchivoBase64(
+            excelBase64,
+            "Consolidado_Actividades.xlsx",
+            "application/vnd.ms-excel"
+          );
+        },
+        (err) => {
+          this.popUpManager.showPopUpGeneric(
+            this.translate.instant("ERROR.titulo_generico"),
+            this.translate.instant("ERROR.persiste_error_comunique_OAS"),
+            MODALS.ERROR,
+            false
+          );
+          console.warn(err);
+        }
+      );
+  }
+
   previewFile(url: string) {
     const dialogDoc = new MatDialogConfig();
     dialogDoc.width = "65vw";

@@ -1,7 +1,7 @@
 import { DocumentoService } from "../services/documento.service";
 import { EspaciosAcademicosService } from "../services/espacios-academicos.service";
 import { GestorDocumentalService } from "../services/gestor-documental.service";
-import { OikosService } from "../services/oikos.service";
+import { AcademicaJbpmService } from "../services/academica-jbpm.service";
 import { ParametrosService } from "../services/parametros.service";
 import { PlanTrabajoDocenteService } from "../services/plan-trabajo-docente.service";
 import { ProyectoAcademicoService } from "../services/proyecto-academico.service";
@@ -15,7 +15,7 @@ export const SERVICES_HTTP = [
     SgaPlanTrabajoDocenteMidService,
     EspaciosAcademicosService,
     TercerosService,
-    OikosService,
+    AcademicaJbpmService,
     SgaEspaciosAcademicosMidService,
     GestorDocumentalService,
     DocumentoService,

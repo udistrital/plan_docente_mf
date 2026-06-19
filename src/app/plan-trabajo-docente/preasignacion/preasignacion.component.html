@@ -4,39 +4,81 @@
       <h2>{{ "ptd.preasignar_ptd" | translate }}</h2>
     </mat-card-title>
   </mat-card-header>
+
+  <!-- Input de Documento Docente para ADMIN_SGA (General, Paso 1) -->
+  <div *ngIf="roles.includes('ADMIN_SGA')" style="padding: 0 16px 16px 16px;">
+    <div class="row">
+      <div class="col-12">
+        <mat-form-field class="form-field" style="width: 100%">
+          <mat-label>{{ "ptd.documento_docente" | translate }}</mat-label>
+          <input matInput [(ngModel)]="documentoDocenteConsulta" (change)="procesarDocumentoSuperusuario()" placeholder="Ej. 79702248" />
+        </mat-form-field>
+      </div>
+    </div>
+  </div>
+
+  <!-- Botones para cambiar vista (solo si tiene ambos roles) -->
+  <mat-toolbar *ngIf="permisos['tabla_docente'] && permisos['tabla_coordinador']" style="display: flex; gap: 1em; background-color: transparent; box-shadow: none;">
+    <button mat-raised-button [color]="vistaActiva === 'docente' ? 'primary' : ''" (click)="cambiarVista('docente')">
+      {{ "ptd.vista_docente" | translate }}
+    </button>
+    <button mat-raised-button [color]="vistaActiva === 'coordinador' ? 'primary' : ''" (click)="cambiarVista('coordinador')">
+      {{ "ptd.vista_coordinador" | translate }}
+    </button>
+  </mat-toolbar>
   <!-- Vista de tabla lista docentes -->
-  <mat-card-content *ngIf="permisos['tabla_docente']">
+  <mat-card-content *ngIf="vistaActiva === 'docente' && permisos['tabla_docente']">
     <h3 class="margin-y">{{ "ptd.preasignacion" | translate }}</h3>
 
-    <mat-form-field class="form-field">
-      <mat-label>{{ "GLOBAL.periodo" | translate }}:</mat-label>
-      <mat-select (selectionChange)="selectPeriodo($event)">
-        <mat-option>--{{ "GLOBAL.seleccionar" | translate }}--</mat-option>
-        <mat-option *ngFor="let item of periodos" [value]="item">
-          <div style="display: flex; flex-wrap: wrap; align-items: center">
-            <div
-              class="badge"
-              [ngStyle]="{
-                backgroundColor: item.Activo
-                  ? 'var(--success-accent)'
-                  : 'var(--danger-base)'
-              }"
-            ></div>
-            <b>{{ item.Nombre }}</b>
-            <small style="margin-left: 5px; font-size: 0.8em; color: gray">
-              (Inicio vigencia: {{ item.InicioVigencia | date : "yyyy-MM-dd" }})
-            </small>
-          </div>
-        </mat-option>
-      </mat-select>
-    </mat-form-field>
+    <div class="alert info" *ngIf="esModoLecturaPorCalendario()">
+      <mat-icon class="icon">lock</mat-icon>
+      Modo lectura debido a restricciones de calendario
+    </div>
+
+    <div class="row">
+      <div class="col-6">
+        <mat-form-field class="form-field" style="width: 100%">
+          <mat-label>{{ "GLOBAL.proyecto_academico" | translate }}:</mat-label>
+          <mat-select (selectionChange)="selectProyecto($event)" [(ngModel)]="proyecto" [disabled]="!proyectos || proyectos.length === 0">
+            <mat-option>--{{ "GLOBAL.seleccionar" | translate }}--</mat-option>
+            <mat-option *ngFor="let item of proyectos" [value]="item">
+              {{ item.Codigo }} - {{ item.Nombre }}
+            </mat-option>
+          </mat-select>
+        </mat-form-field>
+      </div>
+      <div class="col-6">
+        <mat-form-field class="form-field" style="width: 100%">
+          <mat-label>{{ "GLOBAL.periodo" | translate }}:</mat-label>
+          <mat-select (selectionChange)="selectPeriodo($event)" [disabled]="!proyecto">
+            <mat-option>--{{ "GLOBAL.seleccionar" | translate }}--</mat-option>
+            <mat-option *ngFor="let item of periodosFiltrados" [value]="item">
+              <div style="display: flex; flex-wrap: wrap; align-items: center">
+                <div
+                  class="badge"
+                  [ngStyle]="{
+                    backgroundColor: item.Activo
+                      ? 'var(--success-accent)'
+                      : 'var(--danger-base)'
+                  }"
+                ></div>
+                <b>{{ item.Nombre }}</b>
+                <small style="margin-left: 5px; font-size: 0.8em; color: gray">
+                  (Vigencia: {{ item.InicioVigencia | date : "yyyy-MM-dd" }} a {{ item.FinVigencia | date : "yyyy-MM-dd" }})
+                </small>
+              </div>
+            </mat-option>
+          </mat-select>
+        </mat-form-field>
+      </div>
+    </div>
 
     <mat-toolbar style="display: flex; gap: 0.5em; flex-wrap: wrap">
       <button
         mat-flat-button
         extended
         color="warn"
-        *ngIf="periodo.Id"
+        [disabled]="!proyecto || !periodo.Id"
         (click)="loadPreasignaciones()"
         [matTooltip]="'GLOBAL.actualizar' | translate"
       >
@@ -44,10 +86,11 @@
         {{ "GLOBAL.actualizar" | translate }}
       </button>
       <button
-        *ngIf="permisos['aprobacion_docente']"
+        *ngIf="permisos['aprobacion_docente'] && !esModoLecturaPorCalendario()"
         mat-flat-button
         color="accent"
         (click)="enviarAprobacion()"
+        [disabled]="!tienePreasignacionesSeleccionadas()"
       >
         <mat-icon>send</mat-icon>
         {{ "GLOBAL.enviar_aprobacion" | translate }}
@@ -59,7 +102,7 @@
         <mat-label>{{ "GLOBAL.filtrar" | translate }}</mat-label>
         <input matInput (keyup)="applyFilter($event)" #input />
       </mat-form-field>
-      <mat-table mat-table [dataSource]="dataSource" matSort>
+      <mat-table mat-table [dataSource]="dataSource" matSort #docenteSort="matSort">
         <ng-container matColumnDef="espacio_academico">
           <mat-header-cell *matHeaderCellDef mat-sort-header>
             <b>{{ "practicas_academicas.espacio_academico" | translate }}</b>
@@ -100,6 +143,7 @@
             <action-check
               [rowData]="row"
               [value]="row.aprobacion_docente"
+              (checkboxVal)="actualizarAprobacion($event, 'aprobacion_docente')"
             ></action-check>
           </mat-cell>
         </ng-container>
@@ -111,6 +155,7 @@
             <action-check
               [rowData]="row"
               [value]="row.aprobacion_proyecto"
+              (checkboxVal)="actualizarAprobacion($event, 'aprobacion_proyecto')"
             ></action-check>
           </mat-cell>
         </ng-container>
@@ -139,21 +184,43 @@
           *matRowDef="let row; columns: displayedColumns_docente"
         ></mat-row>
       </mat-table>
-      <mat-paginator
+      <mat-paginator #paginatorDocente
         [pageSizeOptions]="[5, 10, 25, 100]"
         aria-label="Select page of users"
       ></mat-paginator>
     </div>
+    <div *ngIf="dataSource.data.length === 0 && hasAttemptedToLoad" class="margin-y alert info">
+      <mat-icon class="icon">sentiment_very_dissatisfied</mat-icon>
+      {{ "ptd.sin_preasignaciones_de_carga_academica_por_periodo" | translate }}
+    </div>
   </mat-card-content>
   <!-- Vista de tabla lista Coordinador -->
-  <mat-card-content *ngIf="permisos['tabla_coordinador']">
+  <mat-card-content *ngIf="vistaActiva === 'coordinador' && permisos['tabla_coordinador']">
     <h3 class="margin-y">{{ "ptd.preasignacion" | translate }}</h3>
 
-    <mat-form-field class="form-field">
-      <mat-label>{{ "GLOBAL.periodo" | translate }}:</mat-label>
-      <mat-select (selectionChange)="selectPeriodo($event)">
+    <div class="alert info" *ngIf="esModoLecturaPorCalendario()">
+      <mat-icon class="icon">lock</mat-icon>
+      Modo lectura debido a restricciones de calendario
+    </div>
+
+    <div class="row">
+      <div class="col-6">
+        <mat-form-field class="form-field" style="width: 100%">
+      <mat-label>{{ "GLOBAL.proyecto_academico" | translate }}:</mat-label>
+      <mat-select (selectionChange)="selectProyecto($event)" [(ngModel)]="proyecto" [disabled]="!proyectos || proyectos.length === 0">
         <mat-option>--{{ "GLOBAL.seleccionar" | translate }}--</mat-option>
-        <mat-option *ngFor="let item of periodos" [value]="item">
+        <mat-option *ngFor="let item of proyectos" [value]="item">
+          {{ item.Codigo }} - {{ item.Nombre }}
+        </mat-option>
+      </mat-select>
+        </mat-form-field>
+      </div>
+      <div class="col-6">
+        <mat-form-field class="form-field" style="width: 100%">
+      <mat-label>{{ "GLOBAL.periodo" | translate }}:</mat-label>
+      <mat-select (selectionChange)="selectPeriodo($event)" [disabled]="!proyecto">
+        <mat-option>--{{ "GLOBAL.seleccionar" | translate }}--</mat-option>
+        <mat-option *ngFor="let item of periodosFiltrados" [value]="item">
           <div style="display: flex; flex-wrap: wrap; align-items: center">
             <div
               class="badge"
@@ -165,12 +232,14 @@
             ></div>
             <b>{{ item.Nombre }}</b>
             <small style="margin-left: 5px; font-size: 0.8em; color: gray">
-              (Inicio vigencia: {{ item.InicioVigencia | date : "yyyy-MM-dd" }})
+              (Vigencia: {{ item.InicioVigencia | date : "yyyy-MM-dd" }} a {{ item.FinVigencia | date : "yyyy-MM-dd" }})
             </small>
           </div>
         </mat-option>
       </mat-select>
-    </mat-form-field>
+        </mat-form-field>
+      </div>
+    </div>
 
     <mat-toolbar style="display: flex; gap: 0.5em; flex-wrap: wrap">
       <button
@@ -188,7 +257,7 @@
         mat-flat-button
         extended
         color="warn"
-        *ngIf="periodo.Id"
+        [disabled]="!proyecto || !periodo.Id"
         (click)="loadPreasignaciones()"
         [matTooltip]="'GLOBAL.actualizar' | translate"
       >
@@ -202,7 +271,7 @@
         <mat-label>{{ "GLOBAL.filtrar" | translate }}</mat-label>
         <input matInput (keyup)="applyFilter($event)" #input />
       </mat-form-field>
-      <mat-table mat-table [dataSource]="dataSource" matSort>
+      <mat-table mat-table [dataSource]="dataSource" matSort #coordSort="matSort">
         <ng-container matColumnDef="docente">
           <mat-header-cell *matHeaderCellDef mat-sort-header>
             <b>{{ "notas.docente" | translate }}</b>
@@ -249,6 +318,7 @@
             <action-check
               [rowData]="row"
               [value]="row.aprobacion_docente"
+              (checkboxVal)="actualizarAprobacion($event, 'aprobacion_docente')"
             ></action-check>
           </mat-cell>
         </ng-container>
@@ -260,6 +330,7 @@
             <action-check
               [rowData]="row"
               [value]="row.aprobacion_proyecto"
+              (checkboxVal)="actualizarAprobacion($event, 'aprobacion_proyecto')"
             ></action-check>
           </mat-cell>
         </ng-container>
@@ -279,18 +350,6 @@
                 {{ getSemaforoPreasignacion(row).icon }}
               </mat-icon>
             </div>
-          </mat-cell>
-        </ng-container>
-        <ng-container matColumnDef="enviar">
-          <mat-header-cell *matHeaderCellDef>
-            <b>{{ "ptd.enviar_a_docente" | translate }}</b>
-          </mat-header-cell>
-          <mat-cell *matCellDef="let row">
-            <action-button
-              [rowData]="row"
-              [value]="row.enviar"
-              (valueChanged)="accionEnviar($event)"
-            ></action-button>
           </mat-cell>
         </ng-container>
         <ng-container matColumnDef="editar">
@@ -317,19 +376,31 @@
             ></action-button>
           </mat-cell>
         </ng-container>
+        <ng-container matColumnDef="ver_detalle">
+          <mat-header-cell *matHeaderCellDef>
+            <b>{{ "GLOBAL.ver" | translate }}</b>
+          </mat-header-cell>
+          <mat-cell *matCellDef="let row">
+            <action-button
+              [rowData]="row"
+              [value]="{ type: 'ver', disabled: false }"
+              (valueChanged)="accionVerDetalle($event)"
+            ></action-button>
+          </mat-cell>
+        </ng-container>
         <mat-header-row
-          *matHeaderRowDef="displayedColumns_coord"
+          *matHeaderRowDef="displayedColumnsCoordActual"
         ></mat-header-row>
         <mat-row
-          *matRowDef="let row; columns: displayedColumns_coord"
+          *matRowDef="let row; columns: displayedColumnsCoordActual"
         ></mat-row>
       </mat-table>
-      <mat-paginator
+      <mat-paginator #paginatorCoord
         [pageSizeOptions]="[5, 10, 25, 100]"
         aria-label="Select page of users"
       ></mat-paginator>
     </div>
-    <div *ngIf="dataSource.data.length === 0" class="margin-y alert info">
+    <div *ngIf="dataSource.data.length === 0 && hasAttemptedToLoad" class="margin-y alert info">
       <mat-icon class="icon">sentiment_very_dissatisfied</mat-icon>
       {{ "ptd.sin_preasignaciones_de_carga_academica_por_periodo" | translate }}
     </div>
