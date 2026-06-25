@@ -1,6 +1,6 @@
 export const environment = {
     production: true,
-    apiUrl: "https://sgaplandocente.portaloas.udistrital.edu.co/",
+    apiUrl: "https://plandocente.portaloas.udistrital.edu.co/",
     PARAMETROS_SERVICE: 'https://autenticacion.portaloas.udistrital.edu.co/apioas/parametros/v1/',
     PLAN_TRABAJO_DOCENTE_SERVICE: 'https://autenticacion.portaloas.udistrital.edu.co/apioas/plan_trabajo_docente_crud/v1/',
     SGA_PLAN_TRABAJO_DOCENTE_MID_SERVICE: 'https://autenticacion.portaloas.udistrital.edu.co/apioas/plan_trabajo_docente_mid/v1/',
@@ -14,4 +14,5 @@ export const environment = {
     PROYECTO_ACADEMICO_SERVICE: 'https://autenticacion.portaloas.udistrital.edu.co/apioas/proyecto_academico_crud/v1/',
     HORARIO_MID_SERVICE: 'https://autenticacion.portaloas.udistrital.edu.co/apioas/horarios_mid/v1/',
     HORARIO_SERVICE: 'https://autenticacion.portaloas.udistrital.edu.co/apioas/horarios_crud/v1/',
+    CONFIGURACION_SERVICE:"https://autenticacion.portaloas.udistrital.edu.co/apioas/configuracion_crud_api/v1/"
 }
