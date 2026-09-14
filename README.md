@@ -6,29 +6,43 @@ Cliente para la gestión de plan trabajo docente, parte del Sistema de Gestión 
 
 ### Tecnologías Implementadas y Versiones
 
-- [Angular](https://angular.io/docs) 17.3.6
-  - Incluye Animations, Common, Compiler, Core, Forms, Platform-Browser, Platform-Browser-Dynamic, Router, cdk (^16.2.14)
-- [Angular Material](https://material.angular.io/) 16.2.14
+- [Angular](https://angular.dev/overview) 20.3.19
+  - Incluye Animations, Common, Compiler, Core, Forms, Platform-Browser, Platform-Browser-Dynamic, Router
+- [Angular CDK](https://material.angular.io/cdk/categories) 20.2.14
+- [Angular Material](https://material.angular.io/) 20.2.14
 - [ngx-translate](https://github.com/ngx-translate/core) 15.0.0
-  - Incluye ngx-translate Http Loader
+  - Incluye ngx-translate Http Loader 8.0.0
 - [RxJS](https://rxjs.dev/guide/overview) ~7.8.0
 - [Single-spa](https://single-spa.js.org/) >=4.0.0
-  - Incluye single-spa-angular
+  - Incluye single-spa-angular 9.0.1
 - [SweetAlert2](https://sweetalert2.github.io/) 11.10.7
-  - Incluye SeetAlert/themes
+  - Incluye @sweetalert2/themes 5.0.16
+- [crypto-js](https://github.com/brix/crypto-js) 4.2.0
 - [tslib](https://github.com/Microsoft/tslib) 2.3.0
-- [Zone.js](https://github.com/angular/angular/tree/master/packages/zone.js) ~0.14.4
-- [lodash](https://lodash.com/) ^4.17.21
-- [spinner-util](https://github.com/udistrital/utils_frontend) ^0.0.2
+- [Zone.js](https://github.com/angular/angular/tree/master/packages/zone.js) ~0.15.1
+- [lodash-es](https://lodash.com/) ^4.18.1
+- [TypeScript](https://www.typescriptlang.org/) ~5.8.3
 
 ### Variables de Entorno
 
 ```javascript
 export const environment = {
   production: false,
-  apiUrl:"http://localhost:4216/",
+  apiUrl: "http://localhost:4216/",
   PARAMETROS_SERVICE: '',
-  assets: '',
+  PLAN_TRABAJO_DOCENTE_SERVICE: '',
+  SGA_PLAN_TRABAJO_DOCENTE_MID_SERVICE: '',
+  ESPACIOS_ACADEMICOS_SERVICE: '',
+  TERCEROS_SERVICE: '',
+  ACADEMICA_JBPM_SERVICE: '',
+  SGA_ESPACIOS_ACADEMICOS_MID_SERVICE: '',
+  FIRMA_ELECTRONICA_MID_SERVICE: '',
+  GESTOR_DOCUMENTAL_MID_SERVICE: '',
+  DOCUMENTO_SERVICE: '',
+  PROYECTO_ACADEMICO_SERVICE: '',
+  HORARIO_MID_SERVICE: '',
+  HORARIO_SERVICE: '',
+  CONFIGURACION_SERVICE: '',
 };
 ```
 ## Ejecución del Proyecto
@@ -143,17 +157,15 @@ Con estos pasos, se tendrán las partes mínimas necesarias para ejecutar el pro
 ```
 ## Ejecución Pruebas
 
-Pruebas unitarias powered by Jest
+Pruebas unitarias powered by Karma + Jasmine
 ```bash
 # run unit test
 npm run test
-# Runt linter + unit test
-npm run test:ui
 ```
 
 ## Estado CI
 
-| Develop | Relese 0.0.1 | Master |
+| Develop | Release 0.0.1 | Master |
 | -- | -- | -- |
 | [![Build Status](https://hubci.portaloas.udistrital.edu.co/api/badges/udistrital/plan_docente_mf/status.svg?ref=refs/heads/develop)](https://hubci.portaloas.udistrital.edu.co/udistrital/plan_docente_mf) | [![Build Status](https://hubci.portaloas.udistrital.edu.co/api/badges/udistrital/plan_docente_mf/status.svg?ref=refs/heads/release/0.0.1)](https://hubci.portaloas.udistrital.edu.co/udistrital/plan_docente_mf) | [![Build Status](https://hubci.portaloas.udistrital.edu.co/api/badges/udistrital/plan_docente_mf/status.svg)](https://hubci.portaloas.udistrital.edu.co/udistrital/plan_docente_mf) |
 
@@ -161,7 +173,7 @@ npm run test:ui
 
 [This file is part of plan_docente_mf.](LICENSE)
 
-plan_docente_mf is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (atSara Sampaio your option) any later version.
+plan_docente_mf is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 
 plan_docente_mf is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
